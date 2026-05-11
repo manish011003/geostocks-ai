@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import TickerTape from "@/components/TickerTape";
 import ThemeToggle from "@/components/ThemeToggle";
+import LlmStatusPill from "@/components/LlmStatusPill";
 import type { StockData } from "@/types";
 import { useSettings } from "@/lib/settings";
 
@@ -61,6 +62,7 @@ export default function TopBar({
       </div>
 
       <div className="topbar-actions">
+        <LlmStatusPill />
         <ThemeToggle />
         <button
           type="button"

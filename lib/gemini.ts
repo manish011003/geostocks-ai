@@ -9,12 +9,21 @@ import { regionToCoords } from "@/lib/geo";
 
 /**
  * Models tried in order. If the upstream returns 503 / quota errors we fall
- * through to the next entry. The last item is the most widely available.
+ * through to the next entry. We include flash and flash-lite variants from
+ * multiple Gemini generations because they're billed against different free-
+ * tier quota buckets, so when one is exhausted another usually still works.
+ *
+ * The chain is intentionally ordered by quality, not by quota size — we want
+ * the best response when capacity is available and the most-likely-to-respond
+ * when capacity is tight.
  */
 const MODEL_CHAIN = [
   "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
   "gemini-2.0-flash",
+  "gemini-2.0-flash-lite",
   "gemini-flash-latest",
+  "gemini-flash-lite-latest",
 ];
 
 let _client: GoogleGenerativeAI | null = null;
@@ -40,22 +49,152 @@ export function isTransientGeminiError(err: unknown): boolean {
   return /\b(503|429|UNAVAILABLE|RESOURCE_EXHAUSTED|quota|overload)/i.test(msg);
 }
 
+/** Specifically a hard quota / rate-limit hit, vs a generic 503 outage. */
+function isQuotaError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /\b(429|RESOURCE_EXHAUSTED|quota|too many requests)/i.test(msg);
+}
+
+/** A daily free-tier hit (vs a per-minute burst limit) — much longer cooldown. */
+function isDailyFreeTierError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /free_tier_requests|per\s*day|day\s*limit/i.test(msg);
+}
+
+/** Pull the suggested retry delay (in seconds) out of a Gemini error message.
+ *  Gemini returns either a "Please retry in 11.884929488s" hint or a
+ *  RetryInfo block with `"retryDelay":"11s"`. */
+function getRetryDelaySec(err: unknown): number | null {
+  const msg = err instanceof Error ? err.message : String(err);
+  const m1 = msg.match(/retry in (\d+(?:\.\d+)?)\s*s/i);
+  if (m1) return parseFloat(m1[1]);
+  const m2 = msg.match(/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/i);
+  if (m2) return parseFloat(m2[1]);
+  return null;
+}
+
+/** Cooldown registry — module-scoped so it survives across requests in the
+ *  same Node instance and we don't keep banging on a 429'd model. */
+interface ModelCooldown {
+  until: number;
+  reason: "quota_day" | "quota_burst" | "transient";
+  detail: string;
+}
+const COOLDOWNS = new Map<string, ModelCooldown>();
+
+const COOLDOWN_TRANSIENT_MS = 60 * 1000;
+const COOLDOWN_BURST_QUOTA_MS = 5 * 60 * 1000;
+const COOLDOWN_DAILY_QUOTA_MS = 60 * 60 * 1000; // 1h, conservative re-check
+const COOLDOWN_MAX_MS = 6 * 60 * 60 * 1000;
+
+function markCooldown(modelName: string, err: unknown): ModelCooldown {
+  const retrySec = getRetryDelaySec(err);
+  let reason: ModelCooldown["reason"] = "transient";
+  let durationMs = retrySec ? retrySec * 1000 : COOLDOWN_TRANSIENT_MS;
+
+  if (isQuotaError(err)) {
+    if (isDailyFreeTierError(err)) {
+      reason = "quota_day";
+      // Trust the suggested retry but cap so we eventually re-probe.
+      durationMs = retrySec
+        ? Math.min(Math.max(retrySec * 1000, COOLDOWN_DAILY_QUOTA_MS), COOLDOWN_MAX_MS)
+        : COOLDOWN_DAILY_QUOTA_MS;
+    } else {
+      reason = "quota_burst";
+      durationMs = retrySec ? retrySec * 1000 : COOLDOWN_BURST_QUOTA_MS;
+    }
+  }
+
+  const cd: ModelCooldown = {
+    until: Date.now() + durationMs,
+    reason,
+    detail: err instanceof Error ? err.message.slice(0, 240) : String(err).slice(0, 240),
+  };
+  COOLDOWNS.set(modelName, cd);
+  return cd;
+}
+
+function isOnCooldown(modelName: string): boolean {
+  const cd = COOLDOWNS.get(modelName);
+  if (!cd) return false;
+  if (Date.now() >= cd.until) {
+    COOLDOWNS.delete(modelName);
+    return false;
+  }
+  return true;
+}
+
+/** Models that are currently candidates for a request (i.e. not on cooldown). */
+export function availableModels(): string[] {
+  return MODEL_CHAIN.filter((m) => !isOnCooldown(m));
+}
+
+export interface GeminiUnavailable {
+  unavailable: true;
+  reason: "no_key" | "quota_exhausted" | "all_failed";
+  cooldowns: { model: string; reason: string; retryAtIso: string }[];
+}
+
+export function geminiAvailability(): GeminiUnavailable | null {
+  if (!client()) {
+    return { unavailable: true, reason: "no_key", cooldowns: [] };
+  }
+  const free = availableModels();
+  if (free.length === 0) {
+    const cds = MODEL_CHAIN.map((m) => {
+      const c = COOLDOWNS.get(m);
+      return c
+        ? {
+            model: m,
+            reason: c.reason,
+            retryAtIso: new Date(c.until).toISOString(),
+          }
+        : null;
+    }).filter((x): x is NonNullable<typeof x> => x !== null);
+    return { unavailable: true, reason: "quota_exhausted", cooldowns: cds };
+  }
+  return null;
+}
+
 /**
- * Run `op(model)` against each model in MODEL_CHAIN until one succeeds, or
- * rethrow the last error if they all fail.
+ * Run `op(model)` against each non-cooled-down model in MODEL_CHAIN until one
+ * succeeds. Models that fail with a transient error get added to the cooldown
+ * registry so subsequent requests in the same Node instance skip them until
+ * the quota window resets.
+ *
+ * Exported alias so other routes (event-detail, chat, ...) can share the same
+ * cooldown-aware retry loop.
  */
+export async function runGeminiWithFallback<T>(
+  op: (modelName: string) => Promise<T>
+): Promise<T> {
+  return runWithFallback(op);
+}
+
 async function runWithFallback<T>(
   op: (modelName: string) => Promise<T>
 ): Promise<T> {
   let lastErr: unknown;
+  let attempted = 0;
   for (const m of MODEL_CHAIN) {
+    if (isOnCooldown(m)) continue;
+    attempted += 1;
     try {
       return await op(m);
     } catch (err) {
       lastErr = err;
       if (!isTransientGeminiError(err)) throw err;
-      console.warn(`[gemini] ${m} unavailable, trying next model:`, err);
+      const cd = markCooldown(m, err);
+      console.warn(
+        `[gemini] ${m} ${cd.reason} until ${new Date(cd.until).toISOString()}, trying next model:`,
+        err
+      );
     }
+  }
+  if (attempted === 0) {
+    throw new Error(
+      "All Gemini models are on cooldown — free-tier quota likely exhausted."
+    );
   }
   throw lastErr ?? new Error("All Gemini models unavailable");
 }

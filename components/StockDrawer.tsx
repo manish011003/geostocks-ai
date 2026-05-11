@@ -50,6 +50,120 @@ interface PredictionResp {
   current_price?: number;
 }
 
+function fmtMoney(n: number): string {
+  if (!Number.isFinite(n)) return "—";
+  if (n >= 1000) {
+    return n.toLocaleString(undefined, { maximumFractionDigits: 1 });
+  }
+  return n.toFixed(2);
+}
+
+interface TargetHeroProps {
+  prediction: PredictionResp;
+}
+
+/** Big "price target" hero card. Hover the (?) for the calculation. */
+function PriceTargetHero({ prediction }: TargetHeroProps) {
+  const { price_target_range: range, current_price, signals, composite_score } =
+    prediction;
+  const hasTarget = range.low > 0 && range.high > 0;
+  const mid = hasTarget ? (range.low + range.high) / 2 : null;
+  const upsidePct =
+    mid !== null && current_price && current_price > 0
+      ? ((mid - current_price) / current_price) * 100
+      : null;
+  const tone =
+    upsidePct === null
+      ? "neutral"
+      : upsidePct > 1
+        ? "bullish"
+        : upsidePct < -1
+          ? "bearish"
+          : "neutral";
+
+  const vol =
+    typeof signals.volatility.detail.realized_vol_pct === "number"
+      ? signals.volatility.detail.realized_vol_pct
+      : null;
+
+  return (
+    <div className={`target-hero tone-${tone}`}>
+      <div className="target-hero-head">
+        <span className="lbl">7-day price target</span>
+        <span
+          className="info-tip"
+          tabIndex={0}
+          aria-label="How is the target calculated?"
+        >
+          ?
+          <span className="tip-popover" role="tooltip">
+            <strong>How this is calculated</strong>
+            <ol>
+              <li>
+                <code>μ</code> = current price ×{" "}
+                <code>(1 + composite/100 × 0.04)</code>
+                <br />
+                <small>
+                  → composite{" "}
+                  <code>{composite_score.toFixed(1)}</code> nudges the centre
+                  of the range up or down ~4% at full conviction.
+                </small>
+              </li>
+              <li>
+                <code>σ_7d</code> = current price ×{" "}
+                <code>(realised vol / √252) × √7</code>
+                <br />
+                <small>
+                  → realised 30-day vol{" "}
+                  <code>
+                    {vol !== null ? `${vol.toFixed(1)}%` : "fallback 1.5%/d"}
+                  </code>{" "}
+                  scaled to a 1-week horizon.
+                </small>
+              </li>
+              <li>
+                Range = <code>μ ± σ_7d</code> — i.e. a 1-standard-deviation
+                band around the model's centre, not a guaranteed corridor.
+              </li>
+            </ol>
+            <em>
+              The composite blends 5 signals: news 30%, technical 25%, regional
+              risk 20%, sector 15%, volatility 10%.
+            </em>
+          </span>
+        </span>
+      </div>
+      {hasTarget ? (
+        <>
+          <div className="target-hero-range">
+            <span className="amt low">${fmtMoney(range.low)}</span>
+            <span className="dash">–</span>
+            <span className="amt high">${fmtMoney(range.high)}</span>
+          </div>
+          <div className="target-hero-meta">
+            {current_price ? (
+              <span className="now">Now ${fmtMoney(current_price)}</span>
+            ) : null}
+            {upsidePct !== null ? (
+              <span className={`delta tone-${tone}`}>
+                {upsidePct > 0 ? "▲" : upsidePct < 0 ? "▼" : "·"}{" "}
+                {Math.abs(upsidePct).toFixed(2)}% mid
+              </span>
+            ) : null}
+            {mid !== null ? (
+              <span className="mid">μ ${fmtMoney(mid)}</span>
+            ) : null}
+          </div>
+        </>
+      ) : (
+        <div className="target-hero-empty">
+          Insufficient price history to project a target.
+        </div>
+      )}
+    </div>
+  );
+}
+
 type Tab = "chart" | "ai" | "events";
 
 interface Props {
@@ -372,6 +486,8 @@ export default function StockDrawer({
                 </>
               ) : prediction ? (
                 <>
+                  <PriceTargetHero prediction={prediction} />
+
                   <div className="ai-summary">
                     <ScoreGauge score={prediction.composite_score} />
                     <div className="ai-summary-meta">
@@ -387,12 +503,6 @@ export default function StockDrawer({
                         </div>
                         <span className="val">{prediction.confidence}%</span>
                       </div>
-                      {prediction.price_target_range.low > 0 ? (
-                        <div className="target-range">
-                          7-day target: ${prediction.price_target_range.low} – $
-                          {prediction.price_target_range.high}
-                        </div>
-                      ) : null}
                     </div>
                   </div>
 

@@ -10,6 +10,7 @@ import Chatbot from "@/components/Chatbot";
 import AskAIButton from "@/components/AskAIButton";
 import StockDrawer from "@/components/StockDrawer";
 import SettingsDrawer from "@/components/SettingsDrawer";
+import MobileNav, { type MobileView } from "@/components/MobileNav";
 import { useSettings } from "@/lib/settings";
 import { useWatchlists, allTrackedSymbols } from "@/lib/watchlists";
 import type { GeoEvent, StockData } from "@/types";
@@ -40,6 +41,7 @@ export default function Dashboard() {
   const [focusEvent, setFocusEvent] = useState<GeoEvent | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [mobileView, setMobileView] = useState<MobileView>("globe");
 
   const settings = useSettings();
   const watchlistState = useWatchlists();
@@ -193,6 +195,27 @@ export default function Dashboard() {
     [drawerSym, stocks]
   );
 
+  const highSeverityCount = useMemo(
+    () => events.filter((e) => e.severity === "HIGH").length,
+    [events]
+  );
+  const activeWatchlistCount = useMemo(() => {
+    const list = watchlistState.lists.find(
+      (l) => l.name === watchlistState.active
+    );
+    return list?.entries.length ?? 0;
+  }, [watchlistState]);
+
+  // When user picks an event from the right panel on mobile, jump to globe so
+  // the focus animation + ring + bottom panel are actually visible.
+  const handleEventSelect = useCallback(
+    (e: GeoEvent) => {
+      setFocusEvent(e);
+      setMobileView("globe");
+    },
+    []
+  );
+
   return (
     <div className="shell">
       <Toaster
@@ -212,7 +235,14 @@ export default function Dashboard() {
         onTickerClick={openStockDrawer}
       />
 
-      <div className="main-grid">
+      <MobileNav
+        value={mobileView}
+        onChange={setMobileView}
+        highSeverityCount={highSeverityCount}
+        watchlistCount={activeWatchlistCount}
+      />
+
+      <div className="main-grid" data-mobile-view={mobileView}>
         <Watchlist
           stocks={stocks}
           events={events}
@@ -235,7 +265,7 @@ export default function Dashboard() {
           loading={eventsLoading}
           error={eventsError}
           selectedId={focusEvent?.id ?? null}
-          onSelect={(e) => setFocusEvent(e)}
+          onSelect={handleEventSelect}
         />
       </div>
 

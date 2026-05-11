@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { type Schema, SchemaType } from "@google/generative-ai";
 import {
-  GEMINI_MODEL_CHAIN,
+  availableModels,
   getGeminiClient,
-  isTransientGeminiError,
+  runGeminiWithFallback,
 } from "@/lib/gemini";
 import { getCache, setCache } from "@/lib/cache";
 
@@ -101,15 +101,23 @@ export async function POST(req: Request) {
     return NextResponse.json({ ...fallbackDetail(body), fallback: true });
   }
 
+  // If every model is on cooldown there's no point dialing the API again.
+  if (availableModels().length === 0) {
+    return NextResponse.json({
+      ...fallbackDetail(body),
+      fallback: true,
+      reason: "quota_exhausted",
+    });
+  }
+
   const userPrompt = `HEADLINE: ${body.title}
 REGION: ${body.region ?? "unknown"}
 SEVERITY: ${body.severity ?? "MEDIUM"}
 SOURCE: ${body.source ?? ""}
 URL: ${body.url ?? ""}`;
 
-  let lastErr: unknown = null;
-  for (const modelName of GEMINI_MODEL_CHAIN) {
-    try {
+  try {
+    const text = await runGeminiWithFallback(async (modelName) => {
       const model = client.getGenerativeModel({
         model: modelName,
         systemInstruction: SYSTEM_PROMPT,
@@ -120,22 +128,19 @@ URL: ${body.url ?? ""}`;
         },
       });
       const result = await model.generateContent(userPrompt);
-      const text = result.response.text();
-      const parsed = JSON.parse(text) as Omit<DetailResponse, "sources">;
-      const payload: DetailResponse = {
-        ...parsed,
-        sources: body.url
-          ? [{ name: body.source ?? "source", url: body.url }]
-          : [],
-      };
-      setCache(cacheKey, payload, CACHE_TTL_MS);
-      return NextResponse.json(payload);
-    } catch (err) {
-      lastErr = err;
-      if (!isTransientGeminiError(err)) break;
-    }
+      return result.response.text();
+    });
+    const parsed = JSON.parse(text) as Omit<DetailResponse, "sources">;
+    const payload: DetailResponse = {
+      ...parsed,
+      sources: body.url
+        ? [{ name: body.source ?? "source", url: body.url }]
+        : [],
+    };
+    setCache(cacheKey, payload, CACHE_TTL_MS);
+    return NextResponse.json(payload);
+  } catch (err) {
+    console.warn("[api/event-detail] all models failed:", err);
+    return NextResponse.json({ ...fallbackDetail(body), fallback: true });
   }
-
-  console.warn("[api/event-detail] all models failed:", lastErr);
-  return NextResponse.json({ ...fallbackDetail(body), fallback: true });
 }

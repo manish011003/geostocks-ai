@@ -56,6 +56,9 @@ const earthFragment = /* glsl */ `
   uniform float nightAmbient;
   uniform float cityLightBoost;
   uniform vec3 atmosphereColor;
+  uniform vec3 nightTint;     // RGB multiplier for the dark hemisphere
+  uniform float terminatorMix; // strength of the warm sunset terminator
+  uniform float rimStrength;  // strength of the lit-limb atmosphere bleed
 
   varying vec2 vUv;
   varying vec3 vWorldNormal;
@@ -70,7 +73,10 @@ const earthFragment = /* glsl */ `
     vec3 dayRaw = texture2D(dayTex, vUv).rgb;
     vec3 nightRaw = texture2D(nightTex, vUv).rgb;
 
-    vec3 nightContinents = dayRaw * vec3(0.55, 0.7, 1.0) * nightAmbient;
+    // Night-side continents = day texture × tint × ambient.
+    // In light mode we bias tint→neutral and ambient→1.0 so the dark
+    // hemisphere fades into the bright page instead of standing out.
+    vec3 nightContinents = dayRaw * nightTint * nightAmbient;
     vec3 cityLights = nightRaw * cityLightBoost;
     vec3 night = nightContinents + cityLights;
 
@@ -80,9 +86,9 @@ const earthFragment = /* glsl */ `
 
     float term = 1.0 - abs(intensity * 5.0);
     term = clamp(term, 0.0, 1.0) * dayMix * (1.0 - dayMix) * 4.0;
-    color += vec3(1.0, 0.5, 0.25) * term * 0.45;
+    color += vec3(1.0, 0.5, 0.25) * term * terminatorMix;
 
-    float rim = pow(1.0 - max(0.0, intensity), 3.0) * dayMix * 0.20;
+    float rim = pow(1.0 - max(0.0, intensity), 3.0) * dayMix * rimStrength;
     color += atmosphereColor * rim;
 
     gl_FragColor = vec4(color, 1.0);
@@ -200,15 +206,31 @@ export default function Globe({
 
     const sunDirUniform = { value: new THREE.Vector3(1, 0, 0) };
 
+    const isLight = theme === "light";
     const earthMat = new THREE.ShaderMaterial({
       uniforms: {
         dayTex: { value: dayTex },
         nightTex: { value: nightTex },
         sunDir: sunDirUniform,
-        dayBoost: { value: theme === "light" ? 1.75 : 1.55 },
-        nightAmbient: { value: theme === "light" ? 0.55 : 0.45 },
-        cityLightBoost: { value: theme === "light" ? 1.6 : 2.6 },
-        atmosphereColor: { value: new THREE.Color(0x4fc3f7) },
+        // Day side intensity. Don't push too hard in light mode or oceans
+        // saturate to white.
+        dayBoost: { value: isLight ? 1.45 : 1.55 },
+        // Night-side ambient. In light mode we want the night side almost as
+        // bright as the day side so the globe doesn't have a stark dark half.
+        nightAmbient: { value: isLight ? 0.95 : 0.45 },
+        // City lights are great on a dark background but distracting on white.
+        cityLightBoost: { value: isLight ? 0.35 : 2.6 },
+        // Cool-blue tint at night in dark mode; neutral/warm on light bg.
+        nightTint: {
+          value: isLight
+            ? new THREE.Color(0.95, 0.92, 0.88)
+            : new THREE.Color(0.55, 0.7, 1.0),
+        },
+        terminatorMix: { value: isLight ? 0.18 : 0.45 },
+        rimStrength: { value: isLight ? 0.08 : 0.2 },
+        atmosphereColor: {
+          value: new THREE.Color(isLight ? 0x2596e1 : 0x4fc3f7),
+        },
       },
       vertexShader: earthVertex,
       fragmentShader: earthFragment,
@@ -218,19 +240,20 @@ export default function Globe({
     const earth = new THREE.Mesh(earthGeo, earthMat);
     scene.add(earth);
 
-    const atmosGeo = new THREE.SphereGeometry(1.08, 64, 64);
+    const atmosGeo = new THREE.SphereGeometry(1.06, 64, 64);
     const atmosMat = new THREE.ShaderMaterial({
       transparent: true,
       side: THREE.BackSide,
       depthWrite: false,
-      blending:
-        theme === "light" ? THREE.NormalBlending : THREE.AdditiveBlending,
+      // Additive blending eats the halo against a white page; switch to
+      // normal blend in light mode and dial the strength way down.
+      blending: isLight ? THREE.NormalBlending : THREE.AdditiveBlending,
       uniforms: {
         glowColor: {
-          value: new THREE.Color(theme === "light" ? 0x2596e1 : 0x4fc3f7),
+          value: new THREE.Color(isLight ? 0x6fa8d6 : 0x4fc3f7),
         },
         sunDir: sunDirUniform,
-        strength: { value: theme === "light" ? 1.4 : 1.0 },
+        strength: { value: isLight ? 0.55 : 1.0 },
       },
       vertexShader: atmosVertex,
       fragmentShader: atmosFragment,
