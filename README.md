@@ -1,224 +1,443 @@
+<div align="center">
+
 # GeoStock AI
 
-A geopolitical stock-intelligence dashboard built on Next.js (App Router). Live
-stock watchlist, a rotatable Three.js 3D globe with AI-tagged event markers, and
-a streaming geopolitical news feed analyzed by Claude.
+**Geopolitical stock intelligence in your browser.**
+A live 3-D globe, multi-list watchlist, AI-tagged news feed, and a streaming
+analyst chatbot — all in a single Next.js dashboard.
 
-## Stack
+[Quick start](#-quick-start) ·
+[Features](#-features) ·
+[Architecture](#-architecture) ·
+[API](#-api) ·
+[Contributing](#-contributing) ·
+[Roadmap](#-roadmap)
 
-- **Next.js** + React + TypeScript (App Router, server routes)
-- **Three.js** for the 3D globe (no `react-three-fiber`)
-- **Tailwind v4** + custom CSS for the terminal-style theme
-- **Google Gemini** (`gemini-2.5-flash`, structured JSON output) for severity / region / sector tagging and per-ticker prediction
-- **Yahoo Finance v8** (no key needed) for prices + 30-day sparklines
-- **GNews** (primary) / **NewsAPI** (fallback) for headlines
-- Simple in-memory TTL cache for stocks (60s), news (10m), predictions (5m)
+</div>
 
-## Layout
+---
 
-- **Topbar (44px)**: logo + live dot, scrolling ticker, UTC clock, theme toggle
-- **Main grid (3 columns)**:
-  - Left (220px): Watchlist with sparklines + Regional Risk bars
-  - Center (flex): Stats row, rotatable globe with pulsing markers, severity legend, live subsolar-point readout
-  - Right (220px): Geopolitical event feed with severity badges
-- **Floating "ASK AI" launcher** (bottom-right): opens a streaming chatbot dock backed by Gemini, with full live context (watchlist + events + 1-year price history of any mentioned ticker). Open with `Ctrl/Cmd + K`, close with `Esc`.
+## What is this?
 
-## Quick start
+GeoStock AI links world events to market moves in real time. It pulls live
+prices, geopolitical headlines, and historical OHLCV, lets Google Gemini tag
+each headline with a severity / region / sector, then plots the result on a
+realtime-lit Three.js globe. Click any event and the camera flies to the
+location, a pulse ring expands on the marker, and a structured analysis panel
+slides up with affected stocks, sectors, and likely market impact. Click any
+ticker (in your watchlist, the ticker tape, or an event panel) and a 480px
+detail drawer slides in with a candlestick chart, a 5-signal AI prediction, and
+the news events tied to that sector.
+
+Everything works **without API keys** — fallbacks ship curated headlines and
+heuristic taggers so the UI is never blank. Add a free Gemini / GNews key for
+the live experience.
+
+## ✨ Features
+
+### Globe & geopolitical intelligence
+- **Day/night-blended Earth** rendered with a custom GLSL shader; the
+  subsolar point is computed from the wall clock so daylight matches reality.
+- **Brightened night side** with city lights layered on top of a tinted day
+  texture, so continents stay legible everywhere on the globe.
+- **Pulsing severity markers** (red / amber / green) for every tagged event,
+  with hover tooltips and a click-to-focus interaction.
+- **Camera fly-to + ring highlight** when you click an event in the right feed
+  or the map — animated with GSAP over 1.2 s.
+- **Event detail panel** slides up from the bottom with a Gemini-generated
+  summary, background, market impact, affected tickers (clickable), sectors,
+  severity reason, and timeline.
+
+### News
+- Five **regional GNews queries fanned out in parallel** so you always get a
+  globally-balanced mix (Middle East / US policy / Latin America / Europe /
+  Africa-India-China), then deduped by normalised title.
+- **Filter bar** with multi-select sector pills, severity pills, and a
+  region quick-jump that maps Gemini's specific regions into top-level
+  buckets (Americas / Europe / Asia / etc.).
+- **Toast notifications** (`react-hot-toast`) for new HIGH-severity events;
+  click the toast to focus the globe + open the detail panel.
+
+### Watchlist & stock detail
+- **Multi-list watchlist** with default **Watchlist / Commodities / Defense**
+  tabs plus a `+` button to create your own. Up to 20 stocks per list.
+- **Drag to reorder** (`@dnd-kit`), hover to remove with `×`, all persisted
+  to `localStorage` via Zustand.
+- **Global stock search** — type any symbol or company and pick from
+  Yahoo-Finance results grouped by country, with flag emojis and exchange
+  badges. One click adds to the active list.
+- **Stock detail drawer** with three tabs:
+  - **Chart** — 1W / 1M / 3M / 6M / 1Y candlestick + volume + RSI panes
+    powered by `lightweight-charts`.
+  - **AI Prediction** — composite-score gauge, BULLISH / BEARISH / NEUTRAL
+    badge, confidence bar, 5-row signal-breakdown table, Gemini reasoning
+    bullets, trigger chips, and a vol-scaled 7-day price target.
+  - **Related Events** — events tagged with this stock's sector.
+
+### AI prediction engine
+A weighted composite of 5 independent signals:
+
+| Signal              | Weight | Source                                                            |
+| ------------------- | ------ | ----------------------------------------------------------------- |
+| News sentiment      | 30 %   | sector-relevant headlines × severity bias                         |
+| Technical           | 25 %   | RSI(14) + MACD(12,26,9) + 20-day SMA from Yahoo OHLCV             |
+| Regional risk delta | 20 %   | recent-vs-older HIGH events, with safe-haven inversion            |
+| Sector correlation  | 15 %   | event-type → sector impact map                                    |
+| Volatility          | 10 %   | annualised σ of daily log returns                                 |
+
+Final composite is clamped to ±100, mapped to a direction at ±15, and
+confidence is `min(95, |composite| + vol_bonus)`. Reasoning + key triggers are
+narrated by Gemini and price targets are scaled by realised volatility.
+
+### Streaming analyst chatbot
+- Streams responses from Gemini via `ReadableStream`; tokens render
+  progressively with a tiny custom Markdown renderer (no `dangerouslySetInnerHTML`).
+- Fresh **LIVE CONTEXT** block on every turn: current watchlist quotes,
+  AI-tagged events, and 1-year OHLC summary for any ticker mentioned.
+- Auto-detects tickers in the user's question; falls back to a graceful
+  context-only answer when Gemini is overloaded.
+- Open / close with `Ctrl/Cmd + K` or the floating **ASK AI** button.
+
+### Settings & UX polish
+- **Settings drawer** (gear icon, top-right) — Appearance (theme, globe
+  texture, ticker speed, default chart timeframe), Data & Refresh
+  intervals, Globe options (auto-rotate, speed slider, markers, pulse),
+  Notifications (HIGH alerts + price-alert %), Data Management (CSV
+  export, reset, clear cache), and a User Profile (display name + JSON
+  export/import). Persisted via `zustand/middleware/persist`.
+- **Theme system** with dark / light / **auto** (follows
+  `prefers-color-scheme`); the bootstrap script applies the theme before
+  paint to avoid FOUC.
+- **NYSE OPEN / PRE / AFTER / CLOSED** pill in the bottom legend, plus the
+  live subsolar lat/lon.
+- Skeleton shimmer loaders, hover-only drag handles + remove buttons,
+  click-anywhere-outside-to-close drawers.
+
+## 🚀 Quick start
 
 ```bash
+git clone https://github.com/<your-fork>/geostock.git
+cd geostock
 npm install
-cp .env.example .env.local   # add your API keys
-npm run dev                  # http://localhost:3000
+cp .env.example .env.local      # paste your keys here
+npm run dev                     # → http://localhost:3000
 ```
 
-The dashboard works **without API keys** — both news and Claude analysis fall
-back to local heuristics + curated headlines so the UI is always populated. Add
-keys for the live experience.
+Or with the keys already in your shell:
 
-## Free API sign-ups
-
-| Provider | Purpose                        | Limit                    | Sign-up                                |
-| -------- | ------------------------------ | ------------------------ | -------------------------------------- |
-| GNews    | Live headlines                 | 100 req/day              | https://gnews.io                       |
-| NewsAPI  | Fallback headlines             | 100 req/day              | https://newsapi.org                    |
-| Gemini   | Severity tagging + predictions | Free tier on AI Studio   | https://aistudio.google.com/app/apikey |
-
-Yahoo Finance is consumed via the unauthenticated `query1.finance.yahoo.com/v8/finance/chart` endpoint.
-
-## File map
-
-```
-app/
-  layout.tsx          fonts (Syne + DM Mono), ThemeProvider
-  page.tsx            dashboard shell, fetch loops, chat launcher
-  globals.css         theme variables (dark + light), animations
-  api/
-    stocks/route.ts   GET  — Yahoo Finance for the watchlist
-    news/route.ts     GET  — GNews → Gemini tagger
-    analyze/route.ts  POST — { ticker } → Gemini prediction
-    chat/route.ts     POST — streaming Gemini chat with live context
-components/
-  Globe.tsx           Three.js scene with day/night blend shader + real-time sun
-  CenterPanel.tsx     stats row + Globe + legend
-  TopBar.tsx          logo, ticker tape, UTC clock, theme toggle
-  TickerTape.tsx      auto-scrolling marquee
-  Watchlist.tsx       left-panel stock rows
-  StockChart.tsx      lightweight SVG sparkline
-  RiskBars.tsx        regional risk score bars
-  EventFeed.tsx       right-panel event list
-  Tooltip3D.tsx       reusable globe tooltip card
-  Chatbot.tsx         streaming chatbot dock with markdown rendering
-  AskAIButton.tsx     floating "ASK AI" launcher
-  ThemeProvider.tsx   dark / light theme context
-  ThemeToggle.tsx     topbar theme switch button
-  SubsolarIndicator.tsx live subsolar lat/lon under the legend
-lib/
-  gemini.ts           Google Gemini SDK wrapper (tagHeadlines, analyzeTicker)
-  chatContext.ts      builds the live LIVE CONTEXT block for the chatbot
-  stocks.ts           Yahoo Finance fetcher + 1y/5y history + summary
-  watchlist-syms.ts   client-safe ticker list
-  news.ts             GNews + NewsAPI fetcher + fallback
-  cache.ts            in-memory TTL cache
-  geo.ts              lat/lon ↔ Three.js Vec3 helpers
-  sun.ts              live subsolar (lat, lon) for shader lighting
-types/
-  index.ts            shared interfaces
+```bash
+GEMINI_API_KEY=… GNEWS_API_KEY=… npm run dev
 ```
 
-## API routes
+The dashboard runs **without API keys**. With no Gemini key, news is tagged
+heuristically and the chatbot returns a context-only summary. With no GNews
+or NewsAPI key, a curated offline event sample is shown.
 
-### `GET /api/stocks`
+### Free API sign-ups
 
-Returns the full watchlist (`AAPL, TSLA, XOM, LMT, NVDA, BA, CVX, GOLD`).
+| Provider     | Purpose                          | Free tier limit          | Sign-up                                  |
+| ------------ | -------------------------------- | ------------------------ | ---------------------------------------- |
+| Google Gemini | Severity tagging + AI analysis  | Generous free tier       | https://aistudio.google.com/app/apikey   |
+| GNews        | Live geopolitical headlines      | 100 req/day              | https://gnews.io                         |
+| NewsAPI      | Fallback when GNews is exhausted | 100 req/day              | https://newsapi.org                      |
+| Yahoo Finance | Quotes + history + search       | Unauthenticated          | n/a                                      |
+
+## 🧱 Architecture
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│  Next.js 16 · App Router · React 19 · TypeScript · Tailwind v4       │
+├──────────────────────────────────────────────────────────────────────┤
+│  app/page.tsx        ← orchestrates state, fetch loops, drawers      │
+│  components/Globe.tsx ← Three.js scene, day/night shader, GSAP focus │
+│  components/StockDrawer.tsx + CandlestickChart.tsx (lightweight-charts)
+│  components/SettingsDrawer.tsx, EventDetailPanel.tsx, NewsFilters.tsx │
+│  components/Watchlist.tsx (@dnd-kit) + StockSearch.tsx                │
+│  components/Chatbot.tsx + AskAIButton.tsx                             │
+├──────────────────────────────────────────────────────────────────────┤
+│  lib/                                                                 │
+│    gemini.ts        ← Gemini SDK + multi-model fallback chain         │
+│    news.ts          ← 5-region fan-out + dedupe                       │
+│    stocks.ts        ← Yahoo Finance quotes + OHLCV history            │
+│    technical.ts     ← RSI, MACD, SMA, realised vol                    │
+│    settings.ts      ← Zustand persist store (UI prefs)                │
+│    watchlists.ts    ← Zustand persist store (multi-list)              │
+│    marketHours.ts   ← NYSE open/closed indicator                      │
+│    geo.ts, sun.ts   ← lat/lon ↔ Vec3, subsolar position               │
+│    cache.ts         ← in-memory TTL cache                             │
+├──────────────────────────────────────────────────────────────────────┤
+│  app/api/*                                                            │
+│    GET  /api/stocks?symbols=…   Yahoo Finance batch quotes            │
+│    GET  /api/history?symbol=…   OHLCV bars + rolling RSI series       │
+│    GET  /api/news               GNews fan-out + Gemini tagger         │
+│    GET  /api/search-stock?q=…   Yahoo Finance global search           │
+│    POST /api/analyze            5-signal composite prediction         │
+│    POST /api/event-detail       Structured Gemini event analysis      │
+│    POST /api/chat               Streaming Gemini chatbot              │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+### Tech stack
+
+- **Next.js 16** (App Router, Turbopack) + **React 19** + **TypeScript**
+- **Three.js** raw (no `react-three-fiber`) + **GSAP** for camera + ring tweens
+- **lightweight-charts** for the candlestick / volume / RSI panes
+- **@dnd-kit** for accessible drag-and-drop in the watchlist
+- **Zustand** + `persist` middleware for client state in `localStorage`
+- **react-hot-toast** for non-blocking notifications
+- **Tailwind v4** + custom CSS variables for the dark / light theme system
+- **Google Gemini** (`gemini-2.5-flash` → `gemini-2.0-flash` →
+  `gemini-flash-latest` fallback chain) for tagging, analysis, and chat
+
+### Resilience
+
+- Every external call has a fallback: GNews → NewsAPI → curated sample;
+  Gemini model A → B → C → heuristic tagger; Yahoo → synthetic quote.
+- The Gemini wrapper detects transient 5xx / quota errors and retries against
+  the next model in the chain.
+- The chatbot streams a graceful "context-only" summary if every model is
+  overloaded, instead of returning a 500.
+- An in-memory TTL cache (60 s for quotes, 5 m for predictions, 10 m for news)
+  keeps the dev / single-instance experience snappy and within free-tier limits.
+
+## 📡 API
+
+### `GET /api/stocks?symbols=AAPL,TSLA,…`
+
+Live quotes for an arbitrary symbol list (defaults to the curated watchlist).
 
 ```jsonc
 {
   "stocks": [
     {
-      "sym": "AAPL",
-      "name": "Apple Inc.",
-      "sector": "tech",
-      "price": 187.65,
-      "change": 1.21,
-      "changePercent": 0.65,
-      "sparkline": [183.2, 184.1, /* ... */]
+      "sym": "AAPL", "name": "Apple Inc.", "sector": "tech",
+      "price": 187.65, "change": 1.21, "changePercent": 0.65,
+      "currency": "USD", "sparkline": [183.2, 184.1, /* … */ ]
     }
-    /* ... */
   ],
   "cached": false
 }
 ```
 
-Cached 60 seconds. Falls back to deterministic synthetic data if Yahoo is unreachable.
+### `GET /api/history?symbol=AAPL&range=3mo`
+
+OHLCV bars + a rolling RSI series for the candlestick chart.
+Supported ranges: `5d`, `1mo`, `3mo`, `6mo`, `1y`, `2y`, `5y`.
 
 ### `GET /api/news`
 
-Pulls 10 latest geopolitical headlines from GNews (or NewsAPI), then sends them
-to Gemini for batch tagging (structured JSON output):
+Tagged geopolitical events. Each event includes `severity`, `region`,
+`lat`, `lon`, `affected_sectors`, `summary`, and source metadata.
+
+### `GET /api/search-stock?q=NVDA`
+
+Yahoo-Finance global search. Returns up to 8 results with `flag`, `country`,
+`exchange`, `type`, and `sector`.
+
+### `POST /api/analyze`  ·  `{ ticker: "LMT" }`
+
+5-signal composite prediction:
 
 ```jsonc
-{
-  "events": [
-    {
-      "id": "evt-0-...",
-      "title": "...",
-      "summary": "...",
-      "severity": "HIGH",
-      "region": "Eastern Europe",
-      "lat": 50.5,
-      "lon": 30.5,
-      "affected_sectors": ["energy", "defense"],
-      "publishedAt": "2026-...",
-      "source": "Reuters"
-    }
-  ],
-  "cached": false
-}
-```
-
-Cached 10 minutes. If Gemini is unavailable, a heuristic tagger labels by keyword.
-
-### `POST /api/analyze`
-
-```jsonc
-// request
-{ "ticker": "LMT" }
-
-// response
 {
   "ticker": "LMT",
-  "sentiment_score": 0.42,
-  "direction": "Up",
-  "confidence": "Medium",
-  "reasoning": ["...", "..."],
-  "key_triggers": ["defense", "sanctions"]
+  "composite_score": 23.4,
+  "direction": "BULLISH",
+  "confidence": 41,
+  "signals": {
+    "news":          { "score":  18, "weight": 0.30, "detail": { "headlines_analyzed": 4 } },
+    "technical":     { "score":  42, "weight": 0.25, "detail": { "rsi": 61.2, "macd": 1.8, "macd_signal": 1.6, "sma20": 412.1, "price_vs_sma20": "above" } },
+    "regional_risk": { "score":  36, "weight": 0.20, "detail": { "recent_high_severity": 3, "older_high_severity": 1, "sector_bias": "safe-haven" } },
+    "sector":        { "score":  60, "weight": 0.15, "detail": { "sector": "defense", "event_breakdown": ["military_conflict: +80"] } },
+    "volatility":    { "score": -10, "weight": 0.10, "detail": { "realized_vol_pct": 28.3 } }
+  },
+  "reasoning": ["…", "…"],
+  "key_triggers": ["military_conflict", "defense"],
+  "price_target_range": { "low": 411.2, "high": 438.9, "timeframe": "7d" },
+  "current_price": 425.07
 }
 ```
 
-Cached 5 minutes per ticker.
+### `POST /api/event-detail`  ·  `{ id, title, region, severity, source, url }`
 
-### `POST /api/chat`
+Structured Gemini analysis of a single event (summary, background,
+market_impact, affected_stocks, affected_sectors, severity_reason,
+timeline, sources).
 
-Streaming chat endpoint backing the in-dashboard analyst. Each request is
-served by Gemini with a freshly built `LIVE CONTEXT` block containing the
-watchlist quotes, AI-tagged events, and a 1-year OHLC summary for any tickers
-referenced in the user's message.
+### `POST /api/chat`  ·  streaming
 
 ```jsonc
-// request
-{
-  "messages": [
-    { "role": "user", "content": "Predict LMT for the next 3 months." }
-  ],
-  "ticker": "LMT" // optional, otherwise auto-detected from the message
-}
-
-// response: text/plain stream of markdown chunks
+{ "messages": [{ "role": "user", "content": "Predict LMT for the next 3 months." }] }
 ```
 
-The chat dock uses the standard `fetch` `ReadableStream` API to render tokens
-progressively. With no `GEMINI_API_KEY` configured, the route returns a
-fallback summary of the live context so the UI keeps working in dev.
+Returns a `text/plain` stream of markdown chunks. Each request rebuilds a
+LIVE CONTEXT block from the watchlist, current events, and 1-year OHLC for
+detected tickers.
 
-## Curl-test the API
+### Curl smoke tests
 
 ```bash
 curl http://localhost:3000/api/stocks
+curl 'http://localhost:3000/api/search-stock?q=NVDA'
+curl 'http://localhost:3000/api/history?symbol=NVDA&range=3mo'
 curl http://localhost:3000/api/news
+
 curl -X POST http://localhost:3000/api/analyze \
-  -H "Content-Type: application/json" \
-  -d '{"ticker":"LMT"}'
+  -H 'Content-Type: application/json' -d '{"ticker":"LMT"}'
+
 curl -N -X POST http://localhost:3000/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{"messages":[{"role":"user","content":"Predict LMT for the next 3 months."}]}'
+  -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"What's the macro setup for NVDA?"}]}'
 ```
 
-## Design notes
+## ⌨️ Keyboard shortcuts
 
-- The Earth uses two `three-globe` textures from unpkg (`earth-blue-marble.jpg`
-  for daylight and `earth-night.jpg` for city lights). A custom GLSL shader
-  blends them based on the live subsolar point (`lib/sun.ts`), so daylight
-  matches whatever the wall clock says it should be.
-- The dark hemisphere shows a tinted, darkened day texture so continents stay
-  legible at night, with the night texture layered on top as emissive city
-  lights.
-- The atmosphere is a `BackSide` shader pass that's brighter on the lit limb;
-  in light mode it switches to normal blending so the halo reads against a
-  bright background.
-- Auto-rotate pauses on user interaction and resumes ~6s after release.
-- A `ResizeObserver` keeps the canvas square as the layout flexes.
-- All fetches degrade gracefully so the dashboard never goes blank.
-- The chat route streams Gemini output via Web `ReadableStream`; the client
-  renders the markdown progressively with a small custom renderer (no
-  unsanitised HTML).
+| Shortcut          | Action                                |
+| ----------------- | ------------------------------------- |
+| `Ctrl/Cmd + K`    | Toggle the AI chatbot                 |
+| `Esc`             | Close chat → drawer → settings → event panel (in that order) |
+| Click ticker tape | Open stock detail drawer              |
+| Click globe marker | Fly camera + open event panel        |
 
-## Production build
+## 🛠️ Production build
 
 ```bash
-npm run build
-npm start
+npm run build       # Next.js production build (Turbopack)
+npm start           # serve the build on :3000
 ```
 
-## License
+## 🤝 Contributing
 
-MIT
+**This is an indie project and contributions are very welcome.** Whether
+you're filing a bug, polishing the UI, or shipping a brand-new panel, you
+have a place here. No issue is too small.
+
+### Good first issues
+
+If you're looking for somewhere to start, any of these are self-contained:
+
+- 🌐 **Add more regional flags** to `app/api/search-stock/route.ts`
+  (`flagForExchange`) — Singapore, Israel, UAE, Switzerland, etc.
+- 🎨 **Skeleton loaders** for the stock-drawer chart while it transitions
+  between time ranges.
+- 📊 **MACD pane** in `CandlestickChart.tsx` (it currently only renders
+  RSI + volume; the MACD calc already exists in `lib/technical.ts`).
+- 🌎 **Country borders overlay** when the "Show country borders" setting is
+  on (currently a no-op toggle in `SettingsDrawer.tsx`).
+- 🔔 **Browser Notification API** for HIGH-severity alerts when the tab is
+  in the background.
+- 🇪🇺 **Multi-currency display** — when "Currency display" is set to "Local",
+  fetch FX rates and translate non-USD watchlist quotes.
+- 📱 **Mobile layout** — the 3-column grid collapses to one column under
+  900 px but the drawers still need polish.
+- ✅ Add **unit tests** for `lib/technical.ts` (RSI / MACD / SMA / vol)
+  and `lib/news.ts` (`deduplicateByTitle`).
+
+Pick one, comment on the issue (or open one), and go. If you'd like to be
+assigned but aren't sure where to begin, just ask — we'll pair on it.
+
+### Local dev workflow
+
+1. Fork the repo and create a topic branch:
+   ```bash
+   git checkout -b feat/my-thing
+   ```
+2. Install dependencies (`npm install`) and run the dev server (`npm run dev`).
+3. Make your changes. Try to keep PRs focused — one feature or one fix per PR.
+4. Verify things still build:
+   ```bash
+   npx tsc --noEmit -p .   # type check
+   npm run build           # production build
+   npm run lint            # ESLint (if configured)
+   ```
+5. Commit with a short, imperative subject line:
+   ```
+   feat(globe): add country-borders overlay
+   fix(news): dedupe titles with smart-quote variants
+   docs(readme): document /api/event-detail
+   ```
+6. Push your branch and open a PR. Describe what you changed and why,
+   and include screenshots / GIFs for any UI changes — they really help.
+
+### Code style
+
+- **TypeScript strict mode** — no `any` unless absolutely necessary.
+- **No new dependencies** without a quick justification in the PR
+  description (we try to keep the bundle lean).
+- **Prefer existing CSS variables** (`var(--blue)`, `var(--surface)`, etc.)
+  so dark / light mode keeps working.
+- **All external calls must have a fallback** — the dashboard should never
+  go blank because an upstream API is down.
+- **Comments explain *why*, not *what***. The code already says what.
+
+### Writing a new feature
+
+Most features touch a similar set of files:
+
+```
+lib/<feature>.ts            ← pure data / utility logic + types
+app/api/<feature>/route.ts  ← server-side glue, caching, fallbacks
+components/<Feature>.tsx    ← client UI, reads from /api or Zustand
+app/page.tsx                ← wire in the new state and props
+app/globals.css             ← styles (use existing CSS vars)
+```
+
+Look at any of the existing trios (e.g. `lib/technical.ts` →
+`app/api/analyze/route.ts` → `components/StockDrawer.tsx`) for the pattern.
+
+### Reporting bugs
+
+Please include:
+
+1. What you did and what you expected to happen.
+2. What actually happened (screenshot or paste of the console / network tab
+   if it's UI / network related).
+3. Your OS, Node version, and whether `GEMINI_API_KEY` / `GNEWS_API_KEY` were
+   set.
+
+### Code of conduct
+
+Be kind. Assume good faith. We're all here because we like building things
+that show how the world is moving — let's keep it a good place to do that.
+
+## 🗺️ Roadmap
+
+Things we'd love to ship next (PRs welcome on any of these):
+
+- [ ] WebSocket / Server-Sent Events for sub-minute price updates
+- [ ] Persistent server-side storage for watchlists (currently localStorage only)
+- [ ] User accounts via NextAuth + per-account watchlists
+- [ ] Backtest tab on the stock drawer using historical OHLCV
+- [ ] More indicators: Bollinger Bands, ADX, OBV
+- [ ] Voice input on the chatbot (Web Speech API)
+- [ ] Self-hosted news scraper as a third tier behind GNews + NewsAPI
+- [ ] Country mesh overlay on the globe (highlight on event)
+- [ ] Internationalisation (i18n) — currently English-only
+
+## 🙏 Acknowledgements
+
+- Earth textures from [`three-globe`](https://github.com/vasturiano/three-globe)
+  (NASA Blue Marble + Earth Night).
+- Yahoo Finance for the unauthenticated quote / search / OHLCV endpoints.
+- [GNews](https://gnews.io) and [NewsAPI](https://newsapi.org) for headlines.
+- [Google Gemini](https://aistudio.google.com) for the structured-JSON LLM
+  backend.
+- [`lightweight-charts`](https://github.com/tradingview/lightweight-charts)
+  by TradingView, [`@dnd-kit`](https://dndkit.com), [`gsap`](https://gsap.com),
+  [`zustand`](https://github.com/pmndrs/zustand),
+  [`react-hot-toast`](https://react-hot-toast.com).
+
+## 📄 License
+
+[MIT](LICENSE) © GeoStock AI contributors.
+
+---
+
+<div align="center">
+
+If GeoStock AI is useful to you, **star the repo** ⭐ — it helps a lot.
+Found a bug, have an idea, or just want to chat about geopolitics + markets?
+**[Open an issue](../../issues/new)** or jump into the
+[discussions](../../discussions). See you there.
+
+</div>
