@@ -1,5 +1,18 @@
 import type { StockData } from "@/types";
+import {
+  EXCHANGES,
+  buildYahooSymbol,
+  resolveExchange,
+  stripYahooSuffix,
+  type ExchangeKey,
+} from "@/lib/exchanges";
 
+/**
+ * v1 left a hard-coded US watchlist here. v2 moves the per-exchange seed
+ * lists into `lib/exchanges.ts`, but we keep this thin export alive so any
+ * caller that hasn't been migrated yet (e.g. legacy chart context) still
+ * sees the original 8-symbol US watchlist.
+ */
 export const WATCHLIST: { sym: string; name: string; sector: string }[] = [
   { sym: "AAPL", name: "Apple Inc.", sector: "tech" },
   { sym: "TSLA", name: "Tesla Inc.", sector: "tech" },
@@ -15,13 +28,18 @@ interface YahooResp {
   chart: {
     result?: Array<{
       meta: {
+        symbol?: string;
         regularMarketPrice?: number;
         chartPreviousClose?: number;
         previousClose?: number;
         regularMarketChangePercent?: number;
         currency?: string;
+        exchangeName?: string;
         fiftyTwoWeekHigh?: number;
         fiftyTwoWeekLow?: number;
+        regularMarketDayHigh?: number;
+        regularMarketDayLow?: number;
+        regularMarketVolume?: number;
       };
       timestamp?: number[];
       indicators: {
@@ -62,58 +80,80 @@ const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 
 /**
- * Yahoo Finance v8 chart endpoint — no API key required.
- * https://query1.finance.yahoo.com/v8/finance/chart/{SYMBOL}?interval=1d&range=1mo
+ * v2 input shape — a bare ticker plus the exchange it belongs to. v1
+ * callers (e.g. `/api/history` with `?symbol=AAPL`) still hit `fetchYahoo`
+ * directly with no exchange metadata and continue to work.
  */
-export async function fetchYahoo(symbol: string): Promise<StockData | null> {
-  const meta = WATCHLIST.find((w) => w.sym === symbol) ?? {
-    sym: symbol,
-    name: symbol,
-    sector: "other",
-  };
+export interface StockRequest {
+  sym: string;
+  exchange?: ExchangeKey | string;
+  /** Human-friendly display name, e.g. "Reliance Industries". */
+  name?: string;
+  sector?: string;
+}
 
+/**
+ * Low-level Yahoo Finance fetch. `symbol` is already the fully-qualified
+ * Yahoo ticker (e.g. "RELIANCE.NS", "AAPL", "7203.T"). Returns a partial
+ * `StockData` enriched with whatever meta the call returns; the caller is
+ * responsible for stamping `name`/`sector`/`exchange`.
+ */
+async function fetchYahooQuote(symbol: string): Promise<{
+  price: number;
+  prev: number;
+  change: number;
+  changePercent: number;
+  sparkline: number[];
+  currency?: string;
+  dayHigh?: number;
+  dayLow?: number;
+  fiftyTwoWeekHigh?: number;
+  fiftyTwoWeekLow?: number;
+  volume?: number;
+  exchangeName?: string;
+} | null> {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
     symbol
   )}?interval=1d&range=1mo`;
-
   try {
     const res = await fetch(url, {
       headers: { "User-Agent": UA, Accept: "application/json" },
       cache: "no-store",
     });
-
     if (!res.ok) {
       console.warn(`[yahoo] ${symbol} HTTP ${res.status}`);
       return null;
     }
-
     const json = (await res.json()) as YahooResp;
-    const result = json.chart?.result?.[0];
-    if (!result) return null;
+    const r = json.chart?.result?.[0];
+    if (!r) return null;
 
-    const price = result.meta.regularMarketPrice ?? 0;
-    const prev =
-      result.meta.chartPreviousClose ?? result.meta.previousClose ?? price;
+    const price = r.meta.regularMarketPrice ?? 0;
+    const prev = r.meta.chartPreviousClose ?? r.meta.previousClose ?? price;
     const changePercent =
-      typeof result.meta.regularMarketChangePercent === "number"
-        ? result.meta.regularMarketChangePercent
+      typeof r.meta.regularMarketChangePercent === "number"
+        ? r.meta.regularMarketChangePercent
         : prev
           ? ((price - prev) / prev) * 100
           : 0;
     const change = price - prev;
-
-    const closes = (result.indicators?.quote?.[0]?.close ?? [])
-      .filter((v): v is number => typeof v === "number" && !Number.isNaN(v));
+    const closes = (r.indicators?.quote?.[0]?.close ?? []).filter(
+      (v): v is number => typeof v === "number" && !Number.isNaN(v)
+    );
 
     return {
-      sym: meta.sym,
-      name: meta.name,
-      sector: meta.sector,
       price,
+      prev,
       change,
       changePercent,
       sparkline: closes,
-      currency: result.meta.currency,
+      currency: r.meta.currency,
+      dayHigh: r.meta.regularMarketDayHigh,
+      dayLow: r.meta.regularMarketDayLow,
+      fiftyTwoWeekHigh: r.meta.fiftyTwoWeekHigh,
+      fiftyTwoWeekLow: r.meta.fiftyTwoWeekLow,
+      volume: r.meta.regularMarketVolume,
+      exchangeName: r.meta.exchangeName,
     };
   } catch (err) {
     console.warn(`[yahoo] ${symbol} fetch failed`, err);
@@ -121,30 +161,123 @@ export async function fetchYahoo(symbol: string): Promise<StockData | null> {
   }
 }
 
+/**
+ * v1 entry point preserved for backward compatibility. Tries the symbol as
+ * given (i.e. respects a "RELIANCE.NS"-style fully-qualified ticker), and
+ * if there's no exchange hint defaults to NYSE/NASDAQ.
+ */
+export async function fetchYahoo(symbol: string): Promise<StockData | null> {
+  const meta = WATCHLIST.find((w) => w.sym === symbol) ?? {
+    sym: symbol,
+    name: stripYahooSuffix(symbol),
+    sector: "other",
+  };
+  const exchange = resolveExchange(symbol);
+  const quote = await fetchYahooQuote(symbol);
+  if (!quote) return null;
+  return {
+    sym: meta.sym,
+    name: meta.name,
+    sector: meta.sector,
+    price: quote.price,
+    change: quote.change,
+    changePercent: quote.changePercent,
+    sparkline: quote.sparkline,
+    currency: quote.currency ?? EXCHANGES[exchange].currency,
+    exchange,
+    yahooSym: symbol,
+    flag: EXCHANGES[exchange].flag,
+  };
+}
+
+/**
+ * v2: fetch one stock by **bare** symbol + exchange. Internally builds the
+ * fully-qualified Yahoo symbol so the caller never has to remember `.BO`
+ * vs `.NS` vs no-suffix-for-US.
+ */
+export async function fetchStockPrice(
+  req: StockRequest
+): Promise<StockData | null> {
+  const exchange = resolveExchange(req.sym, req.exchange) as ExchangeKey;
+  const yahooSym = buildYahooSymbol(req.sym, exchange);
+  const quote = await fetchYahooQuote(yahooSym);
+  if (!quote) return null;
+  const ex = EXCHANGES[exchange];
+  return {
+    sym: req.sym.toUpperCase(),
+    name: req.name ?? stripYahooSuffix(req.sym),
+    sector: req.sector ?? "other",
+    price: quote.price,
+    change: quote.change,
+    changePercent: quote.changePercent,
+    sparkline: quote.sparkline,
+    currency: quote.currency ?? ex.currency,
+    exchange,
+    yahooSym,
+    flag: ex.flag,
+  };
+}
+
+/** v1 default-watchlist loader, kept for compatibility. */
 export async function fetchAllWatchlist(): Promise<StockData[]> {
   const results = await Promise.all(WATCHLIST.map((w) => fetchYahoo(w.sym)));
   return results.filter((r): r is StockData => r !== null);
 }
 
-/** Fetch quotes for an arbitrary symbol list (used by the user-editable
- *  watchlists). Symbols not found are silently dropped. */
+/**
+ * Fetch arbitrary symbols. Each entry may be:
+ *   - a bare US ticker            "AAPL"               → NYSE/NASDAQ default
+ *   - a Yahoo-style suffix ticker "RELIANCE.NS"        → exchange auto-detected
+ *   - an `SYM:EXCHANGE` pair      "RELIANCE:NSE"       → explicit, v2 preferred
+ *
+ * Always uses Promise.allSettled so one bad ticker doesn't kill the rest.
+ */
 export async function fetchSymbols(symbols: string[]): Promise<StockData[]> {
   if (symbols.length === 0) return [];
-  const unique = Array.from(new Set(symbols.map((s) => s.toUpperCase())));
-  const results = await Promise.all(unique.map((s) => fetchYahoo(s)));
-  return results.filter((r): r is StockData => r !== null);
+  const requests: StockRequest[] = symbols
+    .map((raw) => raw.trim())
+    .filter(Boolean)
+    .map((raw) => {
+      if (raw.includes(":")) {
+        const [sym, exchange] = raw.split(":");
+        return { sym: sym.toUpperCase(), exchange };
+      }
+      return { sym: raw.toUpperCase() };
+    });
+  const settled = await Promise.allSettled(requests.map(fetchStockPrice));
+  return settled
+    .filter(
+      (r): r is PromiseFulfilledResult<StockData> =>
+        r.status === "fulfilled" && r.value !== null
+    )
+    .map((r) => r.value);
 }
 
 /**
- * Pull historical OHLC bars from Yahoo Finance. Used by the chatbot to give
- * Gemini real price context (1-year by default) when answering predictions.
+ * v2: fetch many tickers in parallel given full {sym, exchange} metadata.
+ * Used by the upgraded /api/stocks route.
+ */
+export async function fetchStocksByExchange(
+  requests: StockRequest[]
+): Promise<StockData[]> {
+  if (requests.length === 0) return [];
+  const settled = await Promise.allSettled(requests.map(fetchStockPrice));
+  return settled
+    .filter(
+      (r): r is PromiseFulfilledResult<StockData> =>
+        r.status === "fulfilled" && r.value !== null
+    )
+    .map((r) => r.value);
+}
+
+/**
+ * Pull historical OHLC bars. Symbol must be a fully-qualified Yahoo ticker
+ * (use `buildYahooSymbol(sym, exchange)` when calling from a v2 site).
  */
 export async function fetchHistory(
   symbol: string,
   range: Range = "1y"
 ): Promise<History | null> {
-  // Yahoo's daily bars work for ranges up to ~10y. We pick weekly bars for
-  // multi-year ranges so we don't blow the prompt size.
   const interval = range === "5y" || range === "2y" ? "1wk" : "1d";
 
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
@@ -180,7 +313,14 @@ export async function fetchHistory(
       ) {
         continue;
       }
-      bars.push({ t: ts[i] * 1000, o, h, l, c, v: typeof v === "number" ? v : 0 });
+      bars.push({
+        t: ts[i] * 1000,
+        o,
+        h,
+        l,
+        c,
+        v: typeof v === "number" ? v : 0,
+      });
     }
 
     return {
@@ -206,14 +346,10 @@ export interface HistorySummary {
   high: number;
   low: number;
   pctChange: number;
-  realizedVolPct: number; // annualised log-return stdev, %
+  realizedVolPct: number;
   recent: Array<{ date: string; close: number; pct: number }>;
 }
 
-/**
- * Compress a History into a small summary object that fits comfortably inside
- * an LLM prompt: start, end, hi/lo, vol, plus the last 8 closes for context.
- */
 export function summarizeHistory(h: History): HistorySummary {
   const bars = h.bars;
   const start = bars[0];
@@ -226,7 +362,6 @@ export function summarizeHistory(h: History): HistorySummary {
     if (b.l < lo) lo = b.l;
   }
 
-  // Realised volatility: stdev of daily/weekly log returns, annualised.
   const rets: number[] = [];
   for (let i = 1; i < bars.length; i++) {
     if (bars[i - 1].c > 0 && bars[i].c > 0) {
@@ -271,20 +406,42 @@ export function summarizeHistory(h: History): HistorySummary {
   };
 }
 
-/** Deterministic synthetic fallback so the dashboard renders even when
- *  Yahoo Finance is unavailable (rate-limited, blocked, etc). */
+/** Deterministic synthetic fallback so the dashboard still renders if
+ *  Yahoo is rate-limited. v1 returned only the US watchlist; v2 widens
+ *  the fallback to one stock per exchange so the UI shells stay coherent. */
 export function fallbackStocks(): StockData[] {
   const seed = (s: string) =>
     [...s].reduce((a, c) => (a * 33 + c.charCodeAt(0)) >>> 0, 5381);
 
-  return WATCHLIST.map(({ sym, name, sector }, i) => {
-    const base = 50 + (seed(sym) % 350);
+  const seedList: Array<{
+    sym: string;
+    name: string;
+    sector: string;
+    exchange: ExchangeKey;
+  }> = [
+    { sym: "AAPL", name: "Apple Inc.", sector: "tech", exchange: "NASDAQ" },
+    { sym: "TSLA", name: "Tesla Inc.", sector: "tech", exchange: "NASDAQ" },
+    { sym: "XOM", name: "Exxon Mobil", sector: "energy", exchange: "NYSE" },
+    { sym: "LMT", name: "Lockheed Martin", sector: "defense", exchange: "NYSE" },
+    { sym: "NVDA", name: "NVIDIA Corp.", sector: "tech", exchange: "NASDAQ" },
+    { sym: "BA", name: "Boeing Co.", sector: "defense", exchange: "NYSE" },
+    { sym: "CVX", name: "Chevron Corp.", sector: "energy", exchange: "NYSE" },
+    { sym: "GOLD", name: "Barrick Gold", sector: "commodities", exchange: "NYSE" },
+    { sym: "RELIANCE", name: "Reliance Industries", sector: "energy", exchange: "BSE" },
+    { sym: "TCS", name: "Tata Consultancy", sector: "tech", exchange: "BSE" },
+    { sym: "SHEL", name: "Shell", sector: "energy", exchange: "LSE" },
+    { sym: "7203", name: "Toyota", sector: "auto", exchange: "TSE" },
+  ];
+
+  return seedList.map(({ sym, name, sector, exchange }, i) => {
+    const base = 50 + (seed(sym + exchange) % 350);
     const sparkline = Array.from({ length: 22 }, (_, k) => {
       const drift = Math.sin((k + i) * 0.7) * 6 + Math.cos(k * 0.3) * 3;
       return +(base + drift).toFixed(2);
     });
     const price = sparkline[sparkline.length - 1];
     const prev = sparkline[sparkline.length - 2] ?? price;
+    const ex = EXCHANGES[exchange];
     return {
       sym,
       name,
@@ -293,7 +450,10 @@ export function fallbackStocks(): StockData[] {
       change: price - prev,
       changePercent: prev ? ((price - prev) / prev) * 100 : 0,
       sparkline,
-      currency: "USD",
+      currency: ex.currency,
+      exchange,
+      yahooSym: buildYahooSymbol(sym, exchange),
+      flag: ex.flag,
     };
   });
 }

@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
+import { EXCHANGE_KEYS, type ExchangeKey } from "@/lib/exchanges";
 
 export type ThemeMode = "dark" | "light" | "auto";
 export type GlobeTexture = "earth-night" | "earth-day" | "minimal";
@@ -9,7 +10,12 @@ export type TickerSpeed = "slow" | "normal" | "fast";
 export type ChartTimeframe = "1D" | "1W" | "1M";
 export type StockRefresh = 30 | 60 | 300 | 0; // 0 = manual
 export type NewsRefresh = 300 | 600 | 1800;
-export type CurrencyDisplay = "USD" | "Local";
+export type CurrencyDisplay = "Native" | "USD" | "Both";
+/** v1 alias retained for back-compat of older code paths. */
+export type LegacyCurrencyDisplay = "USD" | "Local";
+
+export type DefaultExchangeView = "ALL" | ExchangeKey;
+export type DualBSEPref = "BSE" | "NSE" | "BOTH";
 
 export interface SettingsState {
   // Appearance
@@ -36,6 +42,14 @@ export interface SettingsState {
   priceAlertPct: number; // % move that triggers an alert
   soundAlerts: boolean;
 
+  // v2: Exchange preferences
+  defaultExchangeView: DefaultExchangeView;
+  visibleExchanges: ExchangeKey[];
+  /** When ON, show IST times in footer + drawer for Indian exchanges. */
+  showIST: boolean;
+  /** When a stock exists on both BSE and NSE, which one (or both) to fetch. */
+  dualIndianPref: DualBSEPref;
+
   // User
   displayName: string;
 }
@@ -56,7 +70,7 @@ const DEFAULTS: SettingsState = {
   stockRefreshSec: 60,
   newsRefreshSec: 600,
   showPrePostMarket: true,
-  currencyDisplay: "USD",
+  currencyDisplay: "Native",
 
   autoRotate: true,
   rotationSpeed: 0.4,
@@ -67,6 +81,11 @@ const DEFAULTS: SettingsState = {
   highSeverityAlerts: true,
   priceAlertPct: 3,
   soundAlerts: false,
+
+  defaultExchangeView: "ALL",
+  visibleExchanges: [...EXCHANGE_KEYS],
+  showIST: false,
+  dualIndianPref: "BOTH",
 
   displayName: "",
 };
@@ -88,9 +107,9 @@ export const useSettings = create<SettingsState & SettingsActions>()(
       },
     }),
     {
-      name: "geostock-settings-v1",
+      name: "geostock-settings-v2",
       storage: createJSONStorage(() => localStorage),
-      version: 1,
+      version: 2,
       partialize: (s) => {
         const {
           set: _set,
@@ -100,6 +119,30 @@ export const useSettings = create<SettingsState & SettingsActions>()(
           ...rest
         } = s;
         return rest;
+      },
+      migrate: (persistedState) => {
+        if (!persistedState || typeof persistedState !== "object")
+          return DEFAULTS;
+        // The v1 shape allowed `currencyDisplay: "USD" | "Local"`, neither
+        // of which overlaps the v2 union directly, so we deliberately strip
+        // the field type before comparing.
+        const s = persistedState as Omit<
+          Partial<SettingsState>,
+          "currencyDisplay"
+        > & { currencyDisplay?: string };
+        let currencyDisplay: CurrencyDisplay = DEFAULTS.currencyDisplay;
+        if (s.currencyDisplay === "USD") currencyDisplay = "USD";
+        else if (s.currencyDisplay === "Local") currencyDisplay = "Native";
+        else if (
+          s.currencyDisplay === "Native" ||
+          s.currencyDisplay === "Both"
+        )
+          currencyDisplay = s.currencyDisplay;
+        return {
+          ...DEFAULTS,
+          ...s,
+          currencyDisplay,
+        } as SettingsState;
       },
     }
   )

@@ -3,6 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import {
   type ChartTimeframe,
+  type CurrencyDisplay,
+  type DefaultExchangeView,
+  type DualBSEPref,
   type GlobeTexture,
   type NewsRefresh,
   type StockRefresh,
@@ -11,6 +14,7 @@ import {
   useSettings,
 } from "@/lib/settings";
 import { useWatchlists } from "@/lib/watchlists";
+import { EXCHANGES, EXCHANGE_KEYS, type ExchangeKey } from "@/lib/exchanges";
 
 interface Props {
   open: boolean;
@@ -240,10 +244,98 @@ export default function SettingsDrawer({ open, onClose }: Props) {
                 ]}
               />
             </Row>
-            <Row label="Show pre/post market">
+          </Section>
+
+          <Section title="Exchange Preferences">
+            <Row
+              label="Default exchange view"
+              hint="Which exchange the dashboard starts focused on"
+            >
+              <select
+                className="text-input"
+                value={s.defaultExchangeView}
+                onChange={(e) =>
+                  s.set(
+                    "defaultExchangeView",
+                    e.target.value as DefaultExchangeView
+                  )
+                }
+              >
+                <option value="ALL">🌍 All</option>
+                {EXCHANGE_KEYS.map((k) => (
+                  <option key={k} value={k}>
+                    {EXCHANGES[k].flag} {EXCHANGES[k].name}
+                  </option>
+                ))}
+              </select>
+            </Row>
+            <Row
+              label="Visible exchanges"
+              hint="Uncheck to hide from the footer status strip"
+            >
+              <div className="exchange-checks">
+                {EXCHANGE_KEYS.map((k) => {
+                  const on = s.visibleExchanges.includes(k);
+                  return (
+                    <button
+                      type="button"
+                      key={k}
+                      className={`ex-check ${on ? "on" : ""}`}
+                      style={
+                        on
+                          ? { borderColor: EXCHANGES[k].color, color: EXCHANGES[k].color }
+                          : undefined
+                      }
+                      onClick={() => {
+                        const next = on
+                          ? s.visibleExchanges.filter((x) => x !== k)
+                          : ([...s.visibleExchanges, k] as ExchangeKey[]);
+                        s.set("visibleExchanges", next);
+                      }}
+                      title={EXCHANGES[k].name}
+                    >
+                      <span aria-hidden="true">{EXCHANGES[k].flag}</span>
+                      <span>{k}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </Row>
+            <Row label="Show pre/after-market (US)">
               <Toggle
                 on={s.showPrePostMarket}
                 onChange={(v) => s.set("showPrePostMarket", v)}
+              />
+            </Row>
+            <Row label="Show IST timing for Indian markets">
+              <Toggle
+                on={s.showIST}
+                onChange={(v) => s.set("showIST", v)}
+              />
+            </Row>
+            <Row label="Currency display">
+              <Radio<CurrencyDisplay>
+                value={s.currencyDisplay}
+                onChange={(v) => s.set("currencyDisplay", v)}
+                options={[
+                  { value: "Native", label: "Native" },
+                  { value: "USD", label: "USD" },
+                  { value: "Both", label: "Both" },
+                ]}
+              />
+            </Row>
+            <Row
+              label="BSE / NSE preference"
+              hint="When the same Indian stock is listed on both"
+            >
+              <Radio<DualBSEPref>
+                value={s.dualIndianPref}
+                onChange={(v) => s.set("dualIndianPref", v)}
+                options={[
+                  { value: "BSE", label: "BSE" },
+                  { value: "NSE", label: "NSE" },
+                  { value: "BOTH", label: "Both" },
+                ]}
               />
             </Row>
           </Section>

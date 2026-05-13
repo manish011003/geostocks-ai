@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import toast, { Toaster } from "react-hot-toast";
+import dynamic from "next/dynamic";
 import TopBar from "@/components/TopBar";
 import Watchlist from "@/components/Watchlist";
 import EventFeed from "@/components/EventFeed";
@@ -11,8 +12,20 @@ import AskAIButton from "@/components/AskAIButton";
 import StockDrawer from "@/components/StockDrawer";
 import SettingsDrawer from "@/components/SettingsDrawer";
 import MobileNav, { type MobileView } from "@/components/MobileNav";
+
+// FooterBar reads `new Date()` and timezone data on first render so we keep
+// it client-only — avoids SSR/CSR drift in the status pill countdowns.
+const FooterBar = dynamic(() => import("@/components/FooterBar"), {
+  ssr: false,
+  loading: () => (
+    <footer className="footer-bar" aria-hidden="true">
+      <div className="exchange-pills" />
+    </footer>
+  ),
+});
 import { useSettings } from "@/lib/settings";
-import { useWatchlists, allTrackedSymbols } from "@/lib/watchlists";
+import { useWatchlists, allTrackedSymbolPairs } from "@/lib/watchlists";
+import { resolveExchange, type ExchangeKey } from "@/lib/exchanges";
 import type { GeoEvent, StockData } from "@/types";
 
 interface StocksResponse {
@@ -45,11 +58,14 @@ export default function Dashboard() {
 
   const settings = useSettings();
   const watchlistState = useWatchlists();
-  const symbols = useMemo(
-    () => allTrackedSymbols(watchlistState),
+  // v2: track sym:exchange pairs so the API can build the right Yahoo
+  // ticker (.BO, .NS, etc.) for non-US rows.
+  const symbolPairs = useMemo(
+    () => allTrackedSymbolPairs(watchlistState),
     [watchlistState]
   );
-  const symbolsKey = symbols.join(",");
+  const symbolsKey = symbolPairs.join(",");
+  const [focusExchange, setFocusExchange] = useState<ExchangeKey | null>(null);
 
   const seenEventsRef = useRef<Set<string>>(new Set());
   const lastPriceRef = useRef<Map<string, number>>(new Map());
@@ -61,10 +77,11 @@ export default function Dashboard() {
 
   const loadStocks = useCallback(async () => {
     try {
-      const url =
-        symbols.length > 0
-          ? `/api/stocks?symbols=${encodeURIComponent(symbols.join(","))}`
-          : "/api/stocks";
+      // Read `symbolsKey` directly so the hook's dep array stays stable —
+      // `symbolPairs.join(",")` would force a re-derive every render.
+      const url = symbolsKey
+        ? `/api/stocks?symbols=${encodeURIComponent(symbolsKey)}`
+        : "/api/stocks?exchange=ALL";
       const res = await fetch(url, { cache: "no-store" });
       const data = (await res.json()) as StocksResponse;
       if (!mountedRef.current) return;
@@ -195,6 +212,10 @@ export default function Dashboard() {
     [drawerSym, stocks]
   );
 
+  const drawerExchange: ExchangeKey =
+    (drawerStock?.exchange as ExchangeKey | undefined) ??
+    (drawerSym ? (resolveExchange(drawerSym) as ExchangeKey) : "NYSE");
+
   const highSeverityCount = useMemo(
     () => events.filter((e) => e.severity === "HIGH").length,
     [events]
@@ -249,12 +270,14 @@ export default function Dashboard() {
           loading={stocksLoading}
           selected={selectedSym}
           onSelect={openStockDrawer}
+          onPickExchange={(k) => setFocusExchange(k)}
         />
 
         <CenterPanel
           events={events}
           stocks={stocks}
           focusEvent={focusEvent}
+          focusExchange={focusExchange}
           onMarkerClick={(e) => setFocusEvent(e)}
           onCloseEventPanel={() => setFocusEvent(null)}
           onPickTicker={openStockDrawer}
@@ -277,6 +300,7 @@ export default function Dashboard() {
       />
       <StockDrawer
         ticker={drawerSym}
+        exchange={drawerExchange}
         stock={drawerStock}
         events={events}
         open={drawerOpen}
@@ -287,6 +311,8 @@ export default function Dashboard() {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
       />
+
+      <FooterBar onPickExchange={(k) => setFocusExchange(k)} />
     </div>
   );
 }

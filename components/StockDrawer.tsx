@@ -4,6 +4,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { useTheme } from "@/components/ThemeProvider";
 import { useWatchlists } from "@/lib/watchlists";
+import {
+  EXCHANGES,
+  formatPrice,
+  getExchangeStatus,
+  resolveExchange,
+  type ExchangeKey,
+} from "@/lib/exchanges";
 import type { GeoEvent, StockData } from "@/types";
 
 const CandlestickChart = dynamic(
@@ -50,8 +57,9 @@ interface PredictionResp {
   current_price?: number;
 }
 
-function fmtMoney(n: number): string {
+function fmtMoney(n: number, currency?: string): string {
   if (!Number.isFinite(n)) return "—";
+  if (currency) return formatPrice(n, currency);
   if (n >= 1000) {
     return n.toLocaleString(undefined, { maximumFractionDigits: 1 });
   }
@@ -60,10 +68,11 @@ function fmtMoney(n: number): string {
 
 interface TargetHeroProps {
   prediction: PredictionResp;
+  currency?: string;
 }
 
 /** Big "price target" hero card. Hover the (?) for the calculation. */
-function PriceTargetHero({ prediction }: TargetHeroProps) {
+function PriceTargetHero({ prediction, currency }: TargetHeroProps) {
   const { price_target_range: range, current_price, signals, composite_score } =
     prediction;
   const hasTarget = range.low > 0 && range.high > 0;
@@ -136,13 +145,13 @@ function PriceTargetHero({ prediction }: TargetHeroProps) {
       {hasTarget ? (
         <>
           <div className="target-hero-range">
-            <span className="amt low">${fmtMoney(range.low)}</span>
+            <span className="amt low">{fmtMoney(range.low, currency)}</span>
             <span className="dash">–</span>
-            <span className="amt high">${fmtMoney(range.high)}</span>
+            <span className="amt high">{fmtMoney(range.high, currency)}</span>
           </div>
           <div className="target-hero-meta">
             {current_price ? (
-              <span className="now">Now ${fmtMoney(current_price)}</span>
+              <span className="now">Now {fmtMoney(current_price, currency)}</span>
             ) : null}
             {upsidePct !== null ? (
               <span className={`delta tone-${tone}`}>
@@ -151,7 +160,7 @@ function PriceTargetHero({ prediction }: TargetHeroProps) {
               </span>
             ) : null}
             {mid !== null ? (
-              <span className="mid">μ ${fmtMoney(mid)}</span>
+              <span className="mid">μ {fmtMoney(mid, currency)}</span>
             ) : null}
           </div>
         </>
@@ -168,6 +177,9 @@ type Tab = "chart" | "ai" | "events";
 
 interface Props {
   ticker: string | null;
+  /** v2: which exchange this ticker belongs to. Defaults to NYSE when
+   *  unknown so v1 callers continue to work. */
+  exchange?: ExchangeKey;
   stock?: StockData | null;
   events: GeoEvent[];
   open: boolean;
@@ -185,12 +197,6 @@ const RANGE_TO_API: Record<Range, string> = {
   "6M": "6mo",
   "1Y": "1y",
 };
-
-function fmt(p: number | undefined) {
-  if (p === undefined || !Number.isFinite(p)) return "—";
-  if (p > 1000) return p.toLocaleString(undefined, { maximumFractionDigits: 1 });
-  return p.toFixed(2);
-}
 
 function ScoreGauge({ score }: { score: number }) {
   // Semicircle from -100 (left) to +100 (right). Score is in -100..100.
@@ -273,6 +279,7 @@ function SignalRow({
 
 export default function StockDrawer({
   ticker,
+  exchange,
   stock,
   events,
   open,
@@ -286,8 +293,28 @@ export default function StockDrawer({
   const [historyLoading, setHistoryLoading] = useState(false);
   const [prediction, setPrediction] = useState<PredictionResp | null>(null);
   const [predictionLoading, setPredictionLoading] = useState(false);
+  const [statusTick, setStatusTick] = useState(0);
 
   const watchlists = useWatchlists();
+
+  // Resolve the exchange. Stock metadata wins (already enriched by the
+  // /api/stocks response), then the prop, then ticker-shape heuristics.
+  const exchangeKey: ExchangeKey =
+    (stock?.exchange as ExchangeKey | undefined) ??
+    exchange ??
+    (ticker ? (resolveExchange(ticker) as ExchangeKey) : "NYSE");
+  const exDef = EXCHANGES[exchangeKey];
+  const currency = stock?.currency ?? exDef.currency;
+
+  // Re-render the exchange status pill every 30 s.
+  useEffect(() => {
+    const id = setInterval(() => setStatusTick((t) => t + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
+  const exStatus = useMemo(() => {
+    void statusTick;
+    return getExchangeStatus(exchangeKey);
+  }, [exchangeKey, statusTick]);
 
   const inAnyList = useMemo(() => {
     if (!ticker) return false;
@@ -301,9 +328,10 @@ export default function StockDrawer({
     if (!open || !ticker || tab !== "chart") return;
     setHistoryLoading(true);
     const ctrl = new AbortController();
-    fetch(`/api/history?symbol=${ticker}&range=${RANGE_TO_API[range]}`, {
-      signal: ctrl.signal,
-    })
+    fetch(
+      `/api/history?symbol=${encodeURIComponent(ticker)}&exchange=${exchangeKey}&range=${RANGE_TO_API[range]}`,
+      { signal: ctrl.signal }
+    )
       .then((r) => r.json())
       .then((data: HistoryResp) => setHistory(data))
       .catch((err) => {
@@ -312,7 +340,7 @@ export default function StockDrawer({
       })
       .finally(() => setHistoryLoading(false));
     return () => ctrl.abort();
-  }, [ticker, open, tab, range]);
+  }, [ticker, open, tab, range, exchangeKey]);
 
   // Fetch prediction
   useEffect(() => {
@@ -322,7 +350,7 @@ export default function StockDrawer({
     fetch("/api/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ticker }),
+      body: JSON.stringify({ ticker, exchange: exchangeKey }),
       signal: ctrl.signal,
     })
       .then((r) => r.json())
@@ -333,7 +361,7 @@ export default function StockDrawer({
       })
       .finally(() => setPredictionLoading(false));
     return () => ctrl.abort();
-  }, [ticker, open, tab]);
+  }, [ticker, open, tab, exchangeKey]);
 
   // Reset state when ticker changes
   useEffect(() => {
@@ -366,9 +394,11 @@ export default function StockDrawer({
         sym,
         name: stock?.name ?? sym,
         sector: stock?.sector,
+        exchange: exchangeKey,
+        currency,
       });
     }
-  }, [ticker, stock, inAnyList, watchlists]);
+  }, [ticker, stock, inAnyList, watchlists, exchangeKey, currency]);
 
   const relatedEvents = useMemo(() => {
     if (!stock) return events.slice(0, 6);
@@ -404,13 +434,22 @@ export default function StockDrawer({
               {inAnyList ? "★" : "☆"}
             </button>
             <div className="drawer-titles">
-              <div className="ticker">{ticker ?? "—"}</div>
+              <div className="ticker">
+                <span
+                  className="ex-flag-inline"
+                  aria-hidden="true"
+                  title={exDef.name}
+                >
+                  {exDef.flag}
+                </span>
+                {ticker ?? "—"}
+              </div>
               <div className="name">{stock?.name ?? "—"}</div>
             </div>
           </div>
           <div className="drawer-price">
             <div className={`price ${positive ? "pos" : "neg"}`}>
-              ${fmt(stock?.price)}
+              {stock ? formatPrice(stock.price, currency) : "—"}
             </div>
             <div className={`pct ${positive ? "pos" : "neg"}`}>
               {stock
@@ -421,10 +460,28 @@ export default function StockDrawer({
             </div>
           </div>
           <div className="drawer-meta">
+            <span
+              className="badge-exchange"
+              style={{
+                color: exDef.color,
+                borderColor: exDef.color,
+              }}
+              title={exDef.name}
+            >
+              {exDef.key}
+            </span>
+            <span className="badge-ghost">{currency}</span>
+            <span
+              className={`status-pill status-${exStatus.status.toLowerCase()}`}
+              title={`${exStatus.label} · ${exStatus.localTime} ${exDef.timezone.split("/").pop()}`}
+            >
+              <span className="status-dot" style={{ background: exStatus.color }} />
+              {exStatus.label}
+              <span className="status-countdown">{exStatus.nextEvent}</span>
+            </span>
             <span className="badge-ghost">
               {stock?.sector?.toUpperCase() ?? "—"}
             </span>
-            <span className="badge-ghost">{stock?.currency ?? "USD"}</span>
             <button
               type="button"
               className="drawer-close"
@@ -486,7 +543,7 @@ export default function StockDrawer({
                 </>
               ) : prediction ? (
                 <>
-                  <PriceTargetHero prediction={prediction} />
+                  <PriceTargetHero prediction={prediction} currency={currency} />
 
                   <div className="ai-summary">
                     <ScoreGauge score={prediction.composite_score} />

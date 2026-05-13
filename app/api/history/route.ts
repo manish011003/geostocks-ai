@@ -2,6 +2,12 @@ import { NextResponse } from "next/server";
 import { fetchHistory, type Range } from "@/lib/stocks";
 import { getCache, setCache } from "@/lib/cache";
 import { rsi as rsiAt } from "@/lib/technical";
+import {
+  EXCHANGES,
+  buildYahooSymbol,
+  resolveExchange,
+  type ExchangeKey,
+} from "@/lib/exchanges";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -12,6 +18,10 @@ const VALID: Range[] = ["1mo", "3mo", "6mo", "1y", "2y", "5y"];
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const symbol = (searchParams.get("symbol") ?? "").toUpperCase().trim();
+  // v2: optional `exchange` param so a bare ticker like RELIANCE picks the
+  // right Yahoo suffix. If omitted we fall back to detecting from the symbol
+  // itself (preserves v1 behaviour for "AAPL", "RELIANCE.NS", etc.).
+  const exchangeParam = (searchParams.get("exchange") ?? "").toUpperCase().trim();
   const rangeRaw = searchParams.get("range") ?? "1mo";
   const range = (VALID.includes(rangeRaw as Range) ? rangeRaw : "1mo") as Range;
   // 5d isn't a Yahoo daily range we treat specially; just fall back to 1mo.
@@ -22,11 +32,18 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Missing symbol" }, { status: 400 });
   }
 
-  const cacheKey = `history:${symbol}:${apiRange}`;
+  const exchangeKey = (
+    EXCHANGES[exchangeParam as ExchangeKey]
+      ? (exchangeParam as ExchangeKey)
+      : resolveExchange(symbol)
+  ) as ExchangeKey;
+  const yahooSym = buildYahooSymbol(symbol, exchangeKey);
+
+  const cacheKey = `history:${yahooSym}:${apiRange}`;
   const cached = getCache<unknown>(cacheKey);
   if (cached) return NextResponse.json(cached);
 
-  const h = await fetchHistory(symbol, apiRange);
+  const h = await fetchHistory(yahooSym, apiRange);
   if (!h) {
     return NextResponse.json(
       { error: "history fetch failed", bars: [], rsi: [] },
@@ -48,11 +65,13 @@ export async function GET(req: Request) {
 
   const payload = {
     symbol,
+    yahooSym,
+    exchange: exchangeKey,
     range: rangeRaw,
     bars,
     rsi: rsiOut,
     meta: {
-      currency: h.currency,
+      currency: h.currency ?? EXCHANGES[exchangeKey].currency,
       fiftyTwoWeekHigh: h.fiftyTwoWeekHigh,
       fiftyTwoWeekLow: h.fiftyTwoWeekLow,
     },

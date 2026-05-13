@@ -7,6 +7,7 @@ import SubsolarIndicator from "@/components/SubsolarIndicator";
 import EventDetailPanel from "@/components/EventDetailPanel";
 import { useSettings } from "@/lib/settings";
 import { nyseState } from "@/lib/marketHours";
+import type { ExchangeKey } from "@/lib/exchanges";
 import type { GeoEvent, StockData } from "@/types";
 
 const Globe = dynamic(() => import("@/components/Globe"), {
@@ -33,6 +34,9 @@ interface Props {
   events: GeoEvent[];
   stocks: StockData[];
   focusEvent: GeoEvent | null;
+  /** v2: when the user picks an exchange (via selector or footer pill) we
+   *  swing the globe to its home country. */
+  focusExchange?: ExchangeKey | null;
   onMarkerClick: (event: GeoEvent) => void;
   onCloseEventPanel: () => void;
   onPickTicker: (sym: string) => void;
@@ -42,6 +46,7 @@ export default function CenterPanel({
   events,
   stocks,
   focusEvent,
+  focusExchange,
   onMarkerClick,
   onCloseEventPanel,
   onPickTicker,
@@ -115,8 +120,9 @@ export default function CenterPanel({
           events={events}
           theme={theme}
           focusEvent={focusEvent}
+          focusExchange={focusExchange}
           onMarkerClick={onMarkerClick}
-          autoRotate={autoRotate && !focusEvent}
+          autoRotate={autoRotate && !focusEvent && !focusExchange}
           autoRotateSpeed={rotationSpeed}
           showMarkers={showMarkers}
           markerPulse={markerPulse}

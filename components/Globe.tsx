@@ -7,11 +7,15 @@ import gsap from "gsap";
 import type { GeoEvent } from "@/types";
 import { latLonToVec3 } from "@/lib/geo";
 import { solarPosition } from "@/lib/sun";
+import { EXCHANGES, type ExchangeKey } from "@/lib/exchanges";
 
 interface Props {
   events: GeoEvent[];
   theme?: "dark" | "light";
   focusEvent?: GeoEvent | null;
+  /** v2: when set, the globe rotates so the exchange's country is centred
+   *  and a coloured halo pulses there. Cleared by setting to null. */
+  focusExchange?: ExchangeKey | null;
   onMarkerClick?: (event: GeoEvent) => void;
   /** Settings — read on next render and applied on a best-effort basis. */
   autoRotate?: boolean;
@@ -133,6 +137,7 @@ export default function Globe({
   events,
   theme = "dark",
   focusEvent,
+  focusExchange,
   onMarkerClick,
   autoRotate = true,
   autoRotateSpeed = 0.4,
@@ -545,6 +550,69 @@ export default function Globe({
       // Allow autorotate to come back via the prop, the parent decides.
     };
   }, [focusEvent]);
+
+  // ----- Exchange focus animation -----
+  useEffect(() => {
+    if (!focusExchange) return;
+    const refs = sceneRefs.current;
+    if (!refs) return;
+    const { camera, controls, scene } = refs;
+    const ex = EXCHANGES[focusExchange];
+    if (!ex) return;
+
+    controls.autoRotate = false;
+
+    const dest = latLonToVec3(ex.globe.lat, ex.globe.lon, 1);
+    const r = camera.position.length();
+    const target = new THREE.Vector3(dest.x, dest.y, dest.z)
+      .normalize()
+      .multiplyScalar(r);
+
+    const tween = gsap.to(camera.position, {
+      x: target.x,
+      y: target.y,
+      z: target.z,
+      duration: 1.4,
+      ease: "power2.inOut",
+      onUpdate: () => camera.lookAt(0, 0, 0),
+    });
+
+    // Pulsing halo at the exchange's home city
+    const surface = latLonToVec3(ex.globe.lat, ex.globe.lon, 1.01);
+    const haloGeo = new THREE.RingGeometry(0.05, 0.085, 48);
+    const haloMat = new THREE.MeshBasicMaterial({
+      color: new THREE.Color(ex.color),
+      transparent: true,
+      opacity: 0.85,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const halo = new THREE.Mesh(haloGeo, haloMat);
+    halo.position.set(surface.x, surface.y, surface.z);
+    halo.lookAt(new THREE.Vector3(0, 0, 0));
+    halo.rotateY(Math.PI);
+    scene.add(halo);
+
+    gsap.fromTo(
+      halo.scale,
+      { x: 0.6, y: 0.6, z: 0.6 },
+      { x: 5, y: 5, z: 5, duration: 1.4, ease: "power1.out", repeat: 2 }
+    );
+    gsap.fromTo(
+      haloMat,
+      { opacity: 0.85 },
+      { opacity: 0, duration: 1.4, ease: "power1.out", repeat: 2 }
+    );
+
+    return () => {
+      tween.kill();
+      gsap.killTweensOf(halo.scale);
+      gsap.killTweensOf(haloMat);
+      scene.remove(halo);
+      halo.geometry.dispose();
+      (halo.material as THREE.Material).dispose();
+    };
+  }, [focusExchange]);
 
   return (
     <div

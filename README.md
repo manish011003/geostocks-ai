@@ -3,8 +3,10 @@
 # GeoStock AI
 
 **Geopolitical stock intelligence in your browser.**
-A live 3-D globe, multi-list watchlist, AI-tagged news feed, and a streaming
-analyst chatbot — all in a single Next.js dashboard.
+A live 3-D globe, multi-exchange watchlist, AI-tagged news feed, and a streaming
+analyst chatbot — all in a single Next.js dashboard. Tracks 8 global exchanges
+(NYSE, NASDAQ, BSE, NSE, LSE, EURONEXT, TSE, SSE) with real-time open/close
+status, currency-correct quotes, and a globe that flies to the active market.
 
 [Quick start](#-quick-start) ·
 [Features](#-features) ·
@@ -20,14 +22,18 @@ analyst chatbot — all in a single Next.js dashboard.
 ## What is this?
 
 GeoStock AI links world events to market moves in real time. It pulls live
-prices, geopolitical headlines, and historical OHLCV, lets Google Gemini tag
-each headline with a severity / region / sector, then plots the result on a
-realtime-lit Three.js globe. Click any event and the camera flies to the
+prices from **8 global exchanges**, geopolitical headlines, and historical
+OHLCV; lets Google Gemini tag each headline with a severity / region / sector;
+then plots the result on a realtime-lit Three.js globe. A **multi-exchange
+footer strip** shows live open/closed status, session progress, and a
+countdown to the next bell for every market — and clicking any exchange flies
+the globe to its country. Click any event and the camera flies to the
 location, a pulse ring expands on the marker, and a structured analysis panel
 slides up with affected stocks, sectors, and likely market impact. Click any
 ticker (in your watchlist, the ticker tape, or an event panel) and a 480px
-detail drawer slides in with a candlestick chart, a 5-signal AI prediction, and
-the news events tied to that sector.
+detail drawer slides in with a candlestick chart, a 5-signal AI prediction,
+currency-correct prices (USD, INR, GBP, EUR, JPY, CNY), and the news events
+tied to that sector.
 
 Everything works **without API keys** — fallbacks ship curated headlines and
 heuristic taggers so the UI is never blank. Add a free Gemini / GNews key for
@@ -44,9 +50,36 @@ the live experience.
   with hover tooltips and a click-to-focus interaction.
 - **Camera fly-to + ring highlight** when you click an event in the right feed
   or the map — animated with GSAP over 1.2 s.
+- **Exchange fly-to** — picking an exchange from the footer or selector
+  rotates the globe to that country and pulses a halo over its capital.
 - **Event detail panel** slides up from the bottom with a Gemini-generated
   summary, background, market impact, affected tickers (clickable), sectors,
   severity reason, and timeline.
+
+### Multi-exchange support
+- **8 global exchanges** out of the box — NYSE, NASDAQ, BSE, NSE, LSE,
+  EURONEXT, TSE (Tokyo), SSE (Shanghai). Each one carries its timezone, open/
+  close hours, currency, country, flag, and Yahoo-Finance suffix in
+  `lib/exchanges.ts`.
+- **Live status engine** computes one of `OPEN`, `PRE_MARKET`, `AFTER_HOURS`,
+  `CLOSED`, or `WEEKEND` for every exchange using `Intl.DateTimeFormat` (no
+  extra timezone deps). For open markets it also reports session progress and
+  a countdown to the closing bell; for closed markets it counts down to the
+  next open.
+- **Footer status strip** — horizontally scrollable row of pills, one per
+  exchange, with flag + name + status + countdown + session-progress bar.
+  Click a pill to filter the dashboard to that exchange; the globe flies
+  there. A UTC clock and the active exchange's local time anchor the right
+  edge. Mouse-wheel scrolls horizontally on desktop; touch-swipe on mobile.
+- **Exchange selector** — pill row above the watchlist with **All / NYSE /
+  NASDAQ / BSE / NSE / …** to scope the watchlist + ticker tape + globe
+  focus in one click.
+- **Currency-correct prices** everywhere — INR for BSE/NSE, GBP for LSE,
+  EUR for EURONEXT, JPY for TSE, CNY for SSE, USD for NYSE/NASDAQ. Formatted
+  with `Intl.NumberFormat` and the right symbol per locale.
+- **`SYM:EXCHANGE` symbol syntax** — pass `RELIANCE:NSE` or `7203:TSE` to
+  `/api/stocks` and the route resolves the right Yahoo ticker (`.NS`, `.T`,
+  `.L`, `.PA`, `.SS`, etc.) for you. Legacy bare symbols (`AAPL`) still work.
 
 ### News
 - Five **regional GNews queries fanned out in parallel** so you always get a
@@ -60,19 +93,30 @@ the live experience.
 
 ### Watchlist & stock detail
 - **Multi-list watchlist** with default **Watchlist / Commodities / Defense**
-  tabs plus a `+` button to create your own. Up to 20 stocks per list.
+  tabs plus a `+` button to create your own. Up to 20 stocks per list, each
+  row carrying its exchange + currency metadata.
+- **Exchange filter** above the watchlist scopes the rows (and the ticker
+  tape and globe) to a single market, or shows **All**.
+- **Group-by-exchange toggle** — flips the watchlist into grouped mode with
+  per-exchange headers showing flag, name, and live status pill.
 - **Drag to reorder** (`@dnd-kit`), hover to remove with `×`, all persisted
-  to `localStorage` via Zustand.
+  to `localStorage` via Zustand. A `v1 → v2` migration enriches old entries
+  with exchange + currency fields.
 - **Global stock search** — type any symbol or company and pick from
   Yahoo-Finance results grouped by country, with flag emojis and exchange
-  badges. One click adds to the active list.
+  badges. Optional `&exchange=` filter narrows results to a single market.
+  One click adds to the active list with full exchange metadata.
 - **Stock detail drawer** with three tabs:
   - **Chart** — 1W / 1M / 3M / 6M / 1Y candlestick + volume + RSI panes
-    powered by `lightweight-charts`.
+    powered by `lightweight-charts`. History fetched against the correct
+    Yahoo ticker for the stock's exchange.
   - **AI Prediction** — composite-score gauge, BULLISH / BEARISH / NEUTRAL
     badge, confidence bar, 5-row signal-breakdown table, Gemini reasoning
     bullets, trigger chips, and a vol-scaled 7-day price target.
   - **Related Events** — events tagged with this stock's sector.
+- **Exchange-aware drawer header** — flag, exchange badge, currency badge,
+  and a live status pill (OPEN / CLOSED / PRE / AFTER) for the stock's home
+  market. All prices formatted in the local currency.
 
 ### AI prediction engine
 A weighted composite of 5 independent signals:
@@ -102,14 +146,18 @@ narrated by Gemini and price targets are scaled by realised volatility.
 - **Settings drawer** (gear icon, top-right) — Appearance (theme, globe
   texture, ticker speed, default chart timeframe), Data & Refresh
   intervals, Globe options (auto-rotate, speed slider, markers, pulse),
-  Notifications (HIGH alerts + price-alert %), Data Management (CSV
-  export, reset, clear cache), and a User Profile (display name + JSON
-  export/import). Persisted via `zustand/middleware/persist`.
+  **Exchange Preferences** (default exchange view, visible exchanges in
+  the footer, IST clock for Indian users, BSE+NSE dual-list preference,
+  currency display: native / USD / both), Notifications (HIGH alerts +
+  price-alert %), Data Management (CSV export, reset, clear cache), and
+  a User Profile (display name + JSON export/import). Persisted via
+  `zustand/middleware/persist` with a `v1 → v2` migration for old keys.
 - **Theme system** with dark / light / **auto** (follows
   `prefers-color-scheme`); the bootstrap script applies the theme before
   paint to avoid FOUC.
-- **NYSE OPEN / PRE / AFTER / CLOSED** pill in the bottom legend, plus the
-  live subsolar lat/lon.
+- **Multi-exchange footer** with status pills, session-progress bars, and
+  countdowns for all 8 markets — plus a UTC clock and the active
+  exchange's local time. Replaces the old NYSE-only legend pill.
 - Skeleton shimmer loaders, hover-only drag handles + remove buttons,
   click-anywhere-outside-to-close drawers.
 
@@ -150,27 +198,31 @@ or NewsAPI key, a curated offline event sample is shown.
 ├──────────────────────────────────────────────────────────────────────┤
 │  app/page.tsx        ← orchestrates state, fetch loops, drawers      │
 │  components/Globe.tsx ← Three.js scene, day/night shader, GSAP focus │
+│  components/FooterBar.tsx     ← multi-exchange status strip + UTC    │
+│  components/ExchangeSelector.tsx ← All / NYSE / BSE / … pill row     │
+│  components/Watchlist.tsx (@dnd-kit) + StockSearch.tsx                │
+│  components/TickerTape.tsx     ← exchange-colored, flag-divided      │
 │  components/StockDrawer.tsx + CandlestickChart.tsx (lightweight-charts)
 │  components/SettingsDrawer.tsx, EventDetailPanel.tsx, NewsFilters.tsx │
-│  components/Watchlist.tsx (@dnd-kit) + StockSearch.tsx                │
 │  components/Chatbot.tsx + AskAIButton.tsx                             │
 ├──────────────────────────────────────────────────────────────────────┤
 │  lib/                                                                 │
+│    exchanges.ts     ← 8-exchange registry + status engine + currency  │
 │    gemini.ts        ← Gemini SDK + multi-model fallback chain         │
 │    news.ts          ← 5-region fan-out + dedupe                       │
-│    stocks.ts        ← Yahoo Finance quotes + OHLCV history            │
+│    stocks.ts        ← Yahoo Finance quotes + OHLCV (exchange-aware)   │
 │    technical.ts     ← RSI, MACD, SMA, realised vol                    │
-│    settings.ts      ← Zustand persist store (UI prefs)                │
-│    watchlists.ts    ← Zustand persist store (multi-list)              │
-│    marketHours.ts   ← NYSE open/closed indicator                      │
+│    settings.ts      ← Zustand persist store (UI + exchange prefs, v2) │
+│    watchlists.ts    ← Zustand persist store (multi-list + filters, v2)│
+│    marketHours.ts   ← legacy NYSE indicator (kept for back-compat)    │
 │    geo.ts, sun.ts   ← lat/lon ↔ Vec3, subsolar position               │
 │    cache.ts         ← in-memory TTL cache                             │
 ├──────────────────────────────────────────────────────────────────────┤
 │  app/api/*                                                            │
-│    GET  /api/stocks?symbols=…   Yahoo Finance batch quotes            │
-│    GET  /api/history?symbol=…   OHLCV bars + rolling RSI series       │
+│    GET  /api/stocks?symbols=…&exchange=…  Multi-exchange batch quotes │
+│    GET  /api/history?symbol=…&exchange=…  OHLCV + rolling RSI series  │
 │    GET  /api/news               GNews fan-out + Gemini tagger         │
-│    GET  /api/search-stock?q=…   Yahoo Finance global search           │
+│    GET  /api/search-stock?q=…&exchange=…  Yahoo global search         │
 │    POST /api/analyze            5-signal composite prediction         │
 │    POST /api/event-detail       Structured Gemini event analysis      │
 │    POST /api/chat               Streaming Gemini chatbot              │
@@ -183,7 +235,10 @@ or NewsAPI key, a curated offline event sample is shown.
 - **Three.js** raw (no `react-three-fiber`) + **GSAP** for camera + ring tweens
 - **lightweight-charts** for the candlestick / volume / RSI panes
 - **@dnd-kit** for accessible drag-and-drop in the watchlist
-- **Zustand** + `persist` middleware for client state in `localStorage`
+- **Zustand** + `persist` middleware (with `v1 → v2` migrations) for client
+  state in `localStorage`
+- **`Intl.DateTimeFormat` + `Intl.NumberFormat`** for timezone-aware exchange
+  status and currency-correct prices (no `date-fns-tz` / no FX dependency)
 - **react-hot-toast** for non-blocking notifications
 - **Tailwind v4** + custom CSS variables for the dark / light theme system
 - **Google Gemini** (`gemini-2.5-flash` → `gemini-2.0-flash` →
@@ -202,37 +257,51 @@ or NewsAPI key, a curated offline event sample is shown.
 
 ## 📡 API
 
-### `GET /api/stocks?symbols=AAPL,TSLA,…`
+### `GET /api/stocks?symbols=AAPL,RELIANCE:NSE,7203:TSE&exchange=NYSE`
 
-Live quotes for an arbitrary symbol list (defaults to the curated watchlist).
+Live quotes for an arbitrary symbol list (defaults to the curated watchlist
+for the given exchange, or all 8 exchanges when omitted).
+
+- `symbols` — comma-separated list. Each entry can be a bare symbol
+  (`AAPL`, resolved against `exchange` or autodetected) or fully-qualified
+  `SYM:EXCHANGE` (`RELIANCE:NSE`, `7203:TSE`, `SHEL:LSE`).
+- `exchange` — optional `NYSE | NASDAQ | BSE | NSE | LSE | EURONEXT | TSE
+  | SSE`. Filters defaults and is used as the fallback exchange for bare
+  symbols.
 
 ```jsonc
 {
   "stocks": [
     {
-      "sym": "AAPL", "name": "Apple Inc.", "sector": "tech",
-      "price": 187.65, "change": 1.21, "changePercent": 0.65,
-      "currency": "USD", "sparkline": [183.2, 184.1, /* … */ ]
+      "sym": "RELIANCE", "name": "Reliance Industries Ltd.",
+      "exchange": "NSE", "yahooSym": "RELIANCE.NS", "flag": "🇮🇳",
+      "sector": "energy", "currency": "INR",
+      "price": 2845.30, "change": 12.40, "changePercent": 0.44,
+      "sparkline": [2830.1, 2832.4, /* … */ ]
     }
   ],
   "cached": false
 }
 ```
 
-### `GET /api/history?symbol=AAPL&range=3mo`
+### `GET /api/history?symbol=RELIANCE&exchange=NSE&range=3mo`
 
 OHLCV bars + a rolling RSI series for the candlestick chart.
-Supported ranges: `5d`, `1mo`, `3mo`, `6mo`, `1y`, `2y`, `5y`.
+Supported ranges: `5d`, `1mo`, `3mo`, `6mo`, `1y`, `2y`, `5y`. The
+optional `exchange` param picks the right Yahoo suffix (`.NS`, `.T`,
+`.L`, `.PA`, …); bare US tickers still work without it.
 
 ### `GET /api/news`
 
 Tagged geopolitical events. Each event includes `severity`, `region`,
 `lat`, `lon`, `affected_sectors`, `summary`, and source metadata.
 
-### `GET /api/search-stock?q=NVDA`
+### `GET /api/search-stock?q=Toyota&exchange=TSE`
 
-Yahoo-Finance global search. Returns up to 8 results with `flag`, `country`,
-`exchange`, `type`, and `sector`.
+Yahoo-Finance global search. Returns up to 8 results with `flag`,
+`country`, `exchange`, `exchangeKey` (our normalised key, e.g. `TSE`),
+`currency`, `type`, and `sector`. The optional `exchange` filter narrows
+results to a single market.
 
 ### `POST /api/analyze`  ·  `{ ticker: "LMT" }`
 
@@ -278,8 +347,10 @@ detected tickers.
 
 ```bash
 curl http://localhost:3000/api/stocks
-curl 'http://localhost:3000/api/search-stock?q=NVDA'
-curl 'http://localhost:3000/api/history?symbol=NVDA&range=3mo'
+curl 'http://localhost:3000/api/stocks?exchange=BSE'
+curl 'http://localhost:3000/api/stocks?symbols=SHEL:LSE,7203:TSE,MC:EURONEXT'
+curl 'http://localhost:3000/api/search-stock?q=Toyota&exchange=TSE'
+curl 'http://localhost:3000/api/history?symbol=RELIANCE&exchange=NSE&range=3mo'
 curl http://localhost:3000/api/news
 
 curl -X POST http://localhost:3000/api/analyze \
@@ -316,8 +387,13 @@ have a place here. No issue is too small.
 
 If you're looking for somewhere to start, any of these are self-contained:
 
-- 🌐 **Add more regional flags** to `app/api/search-stock/route.ts`
-  (`flagForExchange`) — Singapore, Israel, UAE, Switzerland, etc.
+- 🌐 **Add a new exchange** to `lib/exchanges.ts` (HKEX, SGX, ASX, KRX,
+  TADAWUL, B3, JSE) — drop in the metadata block (timezone, open/close,
+  Yahoo suffix, country, flag, currency, focus lat/lon) and it shows up
+  in the footer, selector, and search automatically.
+- 💱 **FX translation** in `lib/exchanges.ts` — when
+  `settings.currencyDisplay` is `USD` or `Both`, fetch FX rates (free tier
+  at exchangerate.host) and surface both native + USD prices.
 - 🎨 **Skeleton loaders** for the stock-drawer chart while it transitions
   between time ranges.
 - 📊 **MACD pane** in `CandlestickChart.tsx` (it currently only renders
@@ -326,11 +402,10 @@ If you're looking for somewhere to start, any of these are self-contained:
   on (currently a no-op toggle in `SettingsDrawer.tsx`).
 - 🔔 **Browser Notification API** for HIGH-severity alerts when the tab is
   in the background.
-- 🇪🇺 **Multi-currency display** — when "Currency display" is set to "Local",
-  fetch FX rates and translate non-USD watchlist quotes.
 - 📱 **Mobile layout** — the 3-column grid collapses to one column under
-  900 px but the drawers still need polish.
-- ✅ Add **unit tests** for `lib/technical.ts` (RSI / MACD / SMA / vol)
+  900 px but the drawers + footer pills still need polish.
+- ✅ Add **unit tests** for `lib/exchanges.ts` (`getExchangeStatus` across
+  timezones + DST edges), `lib/technical.ts` (RSI / MACD / SMA / vol),
   and `lib/news.ts` (`deduplicateByTitle`).
 
 Pick one, comment on the issue (or open one), and go. If you'd like to be
@@ -404,6 +479,12 @@ that show how the world is moving — let's keep it a good place to do that.
 
 Things we'd love to ship next (PRs welcome on any of these):
 
+- [x] **Multi-exchange support** — NYSE + NASDAQ + BSE + NSE + LSE + EURONEXT
+  + TSE + SSE, with live status and currency-correct quotes. *(v2)*
+- [ ] **FX translation** — when `currencyDisplay` is `USD` or `Both`,
+  fetch FX rates and translate non-USD watchlist quotes alongside the
+  native price.
+- [ ] More exchanges: HKEX, SGX, ASX, KRX, TADAWUL, B3, JSE.
 - [ ] WebSocket / Server-Sent Events for sub-minute price updates
 - [ ] Persistent server-side storage for watchlists (currently localStorage only)
 - [ ] User accounts via NextAuth + per-account watchlists

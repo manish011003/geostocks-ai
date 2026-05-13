@@ -4,6 +4,12 @@ import { fetchHeadlines, fallbackHeadlines } from "@/lib/news";
 import { WATCHLIST, fetchHistory } from "@/lib/stocks";
 import { getCache, setCache } from "@/lib/cache";
 import { rsi, macd, sma, realizedVolPct } from "@/lib/technical";
+import {
+  EXCHANGES,
+  buildYahooSymbol,
+  resolveExchange,
+  type ExchangeKey,
+} from "@/lib/exchanges";
 import type { GeoEvent } from "@/types";
 
 export const dynamic = "force-dynamic";
@@ -94,9 +100,9 @@ function clamp(n: number, lo = -100, hi = 100): number {
 }
 
 export async function POST(req: Request) {
-  let body: { ticker?: string };
+  let body: { ticker?: string; exchange?: string };
   try {
-    body = (await req.json()) as { ticker?: string };
+    body = (await req.json()) as { ticker?: string; exchange?: string };
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
@@ -106,6 +112,17 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Missing 'ticker' in body" }, { status: 400 });
   }
 
+  // v2: resolve the exchange so fetchHistory uses the right Yahoo suffix
+  // (.BO for BSE, .NS for NSE, etc.). Falls back to NYSE/NASDAQ defaults
+  // when no exchange hint is supplied, preserving v1 behaviour.
+  const exchangeHint = (body.exchange ?? "").toUpperCase();
+  const exchangeKey = (
+    EXCHANGES[exchangeHint as ExchangeKey]
+      ? (exchangeHint as ExchangeKey)
+      : resolveExchange(ticker)
+  ) as ExchangeKey;
+  const yahooSym = buildYahooSymbol(ticker, exchangeKey);
+
   const meta =
     WATCHLIST.find((w) => w.sym === ticker) ?? {
       sym: ticker,
@@ -113,14 +130,14 @@ export async function POST(req: Request) {
       sector: "tech",
     };
 
-  const cacheKey = `prediction:v2:${ticker}`;
+  const cacheKey = `prediction:v2:${yahooSym}`;
   const cached = getCache<CompositeResponse>(cacheKey);
   if (cached) return NextResponse.json({ ...cached, cached: true });
 
   try {
     const [events, history] = await Promise.all([
       ensureEvents(),
-      fetchHistory(ticker, "3mo"),
+      fetchHistory(yahooSym, "3mo"),
     ]);
 
     const closes = (history?.bars ?? []).map((b) => b.c);

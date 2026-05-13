@@ -10,23 +10,33 @@ import {
 
 export interface SearchResult {
   sym: string;
+  /** Optional original Yahoo symbol (e.g. "RELIANCE.NS"). The Watchlist
+   *  stores the bare ticker + exchange so we don't need this client-side. */
+  yahooSym?: string;
   name: string;
+  /** Yahoo's `exchDisp` label, e.g. "BSE", "NMS". Kept for display only. */
   exchange: string;
+  /** v2: our normalised exchange key (NYSE | NASDAQ | BSE | NSE | ...).
+   *  May be null when we can't map confidently. */
+  exchangeKey: import("@/lib/exchanges").ExchangeKey | null;
   country: string;
   flag: string;
   type?: string;
   sector?: string;
+  currency?: string;
 }
 
 interface Props {
   onAdd: (entry: SearchResult) => void;
   /** Symbols already in the active list; rendered as "Added" pills */
   existing: Set<string>;
+  /** Restrict search to a single exchange. "ALL" or undefined → no filter. */
+  exchangeFilter?: "ALL" | import("@/lib/exchanges").ExchangeKey;
 }
 
 const DEBOUNCE_MS = 220;
 
-export default function StockSearch({ onAdd, existing }: Props) {
+export default function StockSearch({ onAdd, existing, exchangeFilter }: Props) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -48,10 +58,13 @@ export default function StockSearch({ onAdd, existing }: Props) {
       const ctrl = new AbortController();
       abortRef.current = ctrl;
       try {
-        const res = await fetch(
-          `/api/search-stock?q=${encodeURIComponent(q)}`,
-          { signal: ctrl.signal }
-        );
+        const params = new URLSearchParams({ q });
+        if (exchangeFilter && exchangeFilter !== "ALL") {
+          params.set("exchange", exchangeFilter);
+        }
+        const res = await fetch(`/api/search-stock?${params.toString()}`, {
+          signal: ctrl.signal,
+        });
         const data = (await res.json()) as { results?: SearchResult[] };
         setResults(data.results ?? []);
       } catch (err) {
@@ -64,7 +77,7 @@ export default function StockSearch({ onAdd, existing }: Props) {
       }
     }, DEBOUNCE_MS);
     return () => window.clearTimeout(id);
-  }, [query]);
+  }, [query, exchangeFilter]);
 
   // Close on outside click + Escape
   useEffect(() => {

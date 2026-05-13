@@ -30,6 +30,13 @@ export interface StockData {
   sparkline: number[];
   sector: string;
   currency?: string;
+  /** Our normalised exchange key (NYSE | NASDAQ | BSE | NSE | ...). Optional
+   *  so v1 callers without exchange metadata still type-check. */
+  exchange?: string;
+  /** Fully-qualified Yahoo symbol used to fetch this row (e.g. "RELIANCE.NS"). */
+  yahooSym?: string;
+  /** Country flag emoji — handy for compact rows that show flag + ticker. */
+  flag?: string;
 }
 
 export interface GeoEvent {

@@ -109,7 +109,7 @@ body {
 
 .shell {
   display: grid;
-  grid-template-rows: 44px 1fr;
+  grid-template-rows: 44px 1fr 36px;
   height: 100vh;
   width: 100vw;
 }
@@ -217,7 +217,7 @@ body {
   .shell {
     height: 100vh;
     height: 100dvh; /* respect dynamic viewport on iOS */
-    grid-template-rows: 44px auto 1fr;
+    grid-template-rows: 44px auto 1fr 36px;
   }
   .topbar {
     position: sticky;
@@ -1977,6 +1977,8 @@ body {
 .drawer-meta {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 6px;
 }
 .badge-ghost {
@@ -2934,3 +2936,490 @@ input[type="range"] {
 [data-theme="light"] .chat-send {
   color: #ffffff;
 }
+
+/* =========================================================================
+   GeoStock AI v2 — multi-exchange UI
+   ========================================================================= */
+
+/* ---------- Footer bar (multi-exchange status strip) ---------- */
+.footer-bar {
+  height: 36px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 16px;
+  font-size: 10px;
+  overflow: hidden;
+  position: relative;
+  z-index: 5;
+}
+.exchange-pills-wrap {
+  position: relative;
+  flex: 1 1 0%;
+  min-width: 0;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+}
+.exchange-pills-wrap::before,
+.exchange-pills-wrap::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 24px;
+  pointer-events: none;
+  z-index: 2;
+}
+.exchange-pills-wrap::before {
+  left: 0;
+  background: linear-gradient(90deg, var(--surface) 20%, transparent);
+}
+.exchange-pills-wrap::after {
+  right: 0;
+  background: linear-gradient(-90deg, var(--surface) 20%, transparent);
+}
+.exchange-pills {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  width: 100%;
+  scroll-behavior: smooth;
+  overscroll-behavior-x: contain;
+}
+.exchange-pills::-webkit-scrollbar {
+  display: none;
+}
+.footer-empty {
+  color: var(--muted);
+  font-size: 10px;
+}
+.ex-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  white-space: nowrap;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 10px;
+  flex-shrink: 0;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.12s ease;
+}
+.ex-pill:hover {
+  background: var(--surface2);
+  transform: translateY(-1px);
+}
+.ex-pill.open {
+  border-color: rgba(0, 230, 118, 0.35);
+}
+.ex-pill.closed {
+  border-color: rgba(255, 82, 82, 0.22);
+  opacity: 0.75;
+}
+.ex-pill.pre_market {
+  border-color: rgba(255, 183, 77, 0.35);
+}
+.ex-pill.after_hours {
+  border-color: rgba(255, 152, 0, 0.35);
+}
+.ex-pill.weekend {
+  border-color: rgba(90, 122, 158, 0.3);
+  opacity: 0.7;
+}
+.ex-pill.active {
+  background: color-mix(in srgb, var(--blue) 18%, transparent);
+  border-color: var(--blue);
+}
+.ex-pill.loading {
+  opacity: 0.5;
+}
+.ex-pill .status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.ex-pill.open .status-dot {
+  animation: ex-pulse 2s infinite;
+}
+@keyframes ex-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(0, 230, 118, 0.55);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(0, 230, 118, 0);
+  }
+}
+.ex-pill .ex-flag {
+  font-size: 11px;
+  line-height: 1;
+}
+.ex-pill .ex-name {
+  font-family: var(--font-syne), sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.ex-pill .ex-status {
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.ex-pill.open .ex-status {
+  color: var(--green);
+}
+.ex-pill.pre_market .ex-status {
+  color: var(--amber);
+}
+.ex-pill.after_hours .ex-status {
+  color: #ff9800;
+}
+.ex-pill .session-bar {
+  position: relative;
+  display: inline-block;
+  width: 32px;
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.ex-pill .session-fill {
+  display: block;
+  height: 100%;
+  background: var(--green);
+  border-radius: 2px;
+  transition: width 1s ease;
+}
+.ex-pill .ex-next {
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+}
+
+.footer-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.footer-right .utc-time {
+  font-family: var(--font-dm-mono), monospace;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--blue);
+}
+.footer-right .active-ex-time {
+  font-family: var(--font-dm-mono), monospace;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+@media (max-width: 900px) {
+  .footer-bar {
+    height: 36px;
+    padding: 0 6px;
+    gap: 6px;
+  }
+  .ex-pill .ex-next {
+    display: none;
+  }
+  .ex-pill .ex-status {
+    display: none;
+  }
+  .footer-right {
+    gap: 6px;
+  }
+  .footer-right .active-ex-time {
+    display: none;
+  }
+}
+
+/* ---------- Exchange selector (pill row above watchlist) ---------- */
+.exchange-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.ex-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--font-dm-mono), monospace;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.12s ease;
+}
+.ex-btn:hover {
+  background: var(--surface2);
+  color: var(--text);
+  transform: translateY(-1px);
+}
+.ex-btn.active {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #060a10;
+  font-weight: 700;
+}
+[data-theme="light"] .ex-btn.active {
+  color: #ffffff;
+}
+
+/* ---------- Watchlist grouped headers (group-by-exchange) ---------- */
+.panel-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.group-toggle {
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--border);
+  background: transparent;
+  border-radius: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+.group-toggle:hover {
+  color: var(--text);
+  border-color: var(--blue);
+}
+.group-toggle.on {
+  background: color-mix(in srgb, var(--blue) 18%, transparent);
+  border-color: var(--blue);
+  color: var(--blue);
+}
+.watchlist-grouped {
+  display: flex;
+  flex-direction: column;
+}
+.watchlist-group {
+  display: flex;
+  flex-direction: column;
+}
+.watchlist-group-header {
+  display: grid;
+  grid-template-columns: 8px 18px 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 6px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface2) 60%, transparent);
+  font-family: var(--font-syne), sans-serif;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.watchlist-group-header.status-open {
+  color: var(--text);
+}
+.watchlist-group-header .group-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.watchlist-group-header.status-open .group-dot {
+  animation: ex-pulse 2s infinite;
+}
+.watchlist-group-header .group-flag {
+  font-size: 14px;
+  line-height: 1;
+}
+.watchlist-group-header .group-name {
+  font-weight: 700;
+  color: var(--text);
+}
+.watchlist-group-header .group-meta {
+  color: var(--muted);
+  font-size: 9px;
+}
+.watchlist-group-header .group-count {
+  font-family: var(--font-dm-mono), monospace;
+  font-size: 10px;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 0 6px;
+  border-radius: 2px;
+}
+.stock-row.flat .drag-handle.disabled {
+  color: var(--border);
+  cursor: default;
+  pointer-events: none;
+}
+
+/* Inline flag inside `.stock-row .sym` */
+.stock-row .row-flag {
+  display: inline-block;
+  margin-right: 4px;
+  font-size: 11px;
+  line-height: 1;
+  vertical-align: -1px;
+}
+
+/* ---------- Stock drawer: exchange badge + live status pill ---------- */
+.badge-exchange {
+  font-family: var(--font-syne), sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  border: 1px solid var(--blue);
+  padding: 2px 6px;
+  border-radius: 2px;
+  text-transform: uppercase;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+.drawer-titles .ex-flag-inline {
+  display: inline-block;
+  margin-right: 6px;
+  font-size: 18px;
+  line-height: 1;
+  vertical-align: -2px;
+}
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: var(--surface);
+  white-space: nowrap;
+}
+.status-pill.status-open {
+  color: var(--green);
+  border-color: rgba(0, 230, 118, 0.4);
+}
+.status-pill.status-closed {
+  color: var(--red);
+  border-color: rgba(255, 82, 82, 0.3);
+}
+.status-pill.status-pre_market {
+  color: var(--amber);
+  border-color: rgba(255, 183, 77, 0.4);
+}
+.status-pill.status-after_hours {
+  color: #ff9800;
+  border-color: rgba(255, 152, 0, 0.4);
+}
+.status-pill.status-weekend {
+  color: var(--muted);
+  border-color: rgba(90, 122, 158, 0.4);
+}
+.status-pill .status-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+.status-pill.status-open .status-dot {
+  animation: ex-pulse 2s infinite;
+}
+.status-pill .status-countdown {
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  text-transform: none;
+  margin-left: 3px;
+}
+
+/* ---------- Ticker tape: exchange dividers + accent colours ---------- */
+.ticker-pair {
+  display: inline-flex;
+  align-items: center;
+}
+.ticker-divider {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin: 0 10px;
+  opacity: 0.85;
+}
+.ticker-divider-bar {
+  display: inline-block;
+  width: 1px;
+  height: 14px;
+  background: currentColor;
+  opacity: 0.7;
+}
+.ticker-divider-flag {
+  font-size: 13px;
+  line-height: 1;
+}
+.ticker-item .sym {
+  /* sym color is set via inline style; keep the existing letter spacing */
+  transition: color 0.15s ease;
+}
+
+/* ---------- Settings: exchange checkbox grid ---------- */
+.exchange-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  justify-content: flex-end;
+  max-width: 220px;
+}
+.ex-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--muted);
+  font-family: var(--font-dm-mono), monospace;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+.ex-check:hover {
+  background: var(--surface2);
+}
+.ex-check.on {
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
